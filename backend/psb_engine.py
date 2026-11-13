@@ -157,7 +157,7 @@ class KnowledgeBase:
                 result.append(Fragment(f'{focus.document_id}-{lo+1}-section',focus.document_id,focus.title,focus.category,lo+1,stop,value,lines[parent],parent+1))
         return result
 
-    def search(self, question: str, limit: int = 8, extra_queries=None, preferred_documents=None) -> list[Fragment]:
+    def search(self, question: str, limit: int = 8, extra_queries=None, preferred_documents=None, preferred_fragments=None) -> list[Fragment]:
         history, current = split_dialogue(question)
         prior = " ".join(m["text"] for m in history if m["role"] == "user")
         query = Counter(terms(expanded_query(current)))
@@ -173,6 +173,8 @@ class KnowledgeBase:
         # Выбор планировщика — мягкий сигнал, не разрешение игнорировать исходный вопрос.
         preferred = set(preferred_documents or [])
         scores = [(score*1.25+2 if f.document_id in preferred else score,f) for score,f in scores]
+        hits=set(preferred_fragments or [])
+        scores = [(score+15 if f.id in hits else score,f) for score,f in scores]
         # Явно названная статья имеет приоритет; сохраняем остальные источники для сопоставления.
         article_numbers = re.findall(r'(?:ст(?:атья|атье|атьи|атью)?\.?\s*)(\d+(?:\.\d+)?)', current, re.I)
         codes = re.findall(r'\b(ТК|НК|ГК|КоАП)\b', current, re.I)
@@ -304,10 +306,11 @@ async def checked_answer(question: str, history: list[dict], fragments: list[Fra
         return validate(repaired,fragments)
 
 
-async def answer_question(kb: KnowledgeBase, question: str, history: list[dict], generate, planner=None) -> dict:
+async def answer_question(kb: KnowledgeBase, question: str, history: list[dict], generate, planner=None, retrieval_hints=None) -> dict:
     """Один ограниченный шаг уточнения поиска; при его ошибке сохраняем обычный поиск."""
     combined = json.dumps([*history,{"role":"user","text":question}],ensure_ascii=False) if history else question
-    extra, preferred = [], []
+    retrieval_hints=retrieval_hints or {}
+    extra, preferred = [], list(retrieval_hints.get('documents',[]))
     if planner is not None and os.environ.get('RAG_QUERY_EXPANSION','1') != '0':
         embedded,current = split_dialogue(question)
         catalog = [{'id':f'D{i+1}','title':d['title'],'opening':d['text'][:400]} for i,d in enumerate(kb.documents.values())]
@@ -321,11 +324,11 @@ async def answer_question(kb: KnowledgeBase, question: str, history: list[dict],
             queries,documents = plan.get('queries',[]),plan.get('documents',[])
             if not isinstance(queries,list) or not isinstance(documents,list): raise ValueError('Invalid retrieval lists')
             extra = [q[:250] for q in queries[:3] if isinstance(q,str)]
-            preferred = [ids[d] for d in documents[:3] if isinstance(d,str) and d in ids]
+            preferred += [ids[d] for d in documents[:3] if isinstance(d,str) and d in ids]
         except (ValueError,TypeError,TimeoutError,httpx.HTTPError,RuntimeError,KeyError):
             # План — оптимизация, сбой сервиса не должен превращать отвечаемый вопрос в отказ.
             pass
-    fragments = kb.search(combined,extra_queries=extra,preferred_documents=preferred)
+    fragments = kb.search(combined,extra_queries=extra,preferred_documents=preferred,preferred_fragments=retrieval_hints.get('fragments',[]))
     result = await checked_answer(question,history,fragments,generate,kb.catalog)
     return qualify_missing_references(result,kb.catalog)
 

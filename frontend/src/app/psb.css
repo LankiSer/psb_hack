@@ -119,3 +119,61 @@
 }
 @media(prefers-reduced-motion:reduce) { .kb-app * { scroll-behavior:auto!important; animation:none!important; transition:none!important; } }
 html[data-reduce-motion="true"] .kb-app * { scroll-behavior:auto!important; animation:none!important; transition:none!important; }
+
+/* Загрузка источников: реальные этапы обработки вместо декоративного прогресса. */
+.kb-add-documents { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; min-height:38px; margin:18px 0 0; border:1px solid #d8e1f0; background:#eef3fc; color:#243c7c; border-radius:7px; font-size:12px; font-weight:500; transition:background .18s; }
+.kb-add-documents:hover { background:#e3ebfa; }
+.kb-count { border-radius:4px; padding:1px 5px; background:#243c7c; color:white; font-size:10px; }
+.kb-processing-note { display:flex; align-items:center; gap:8px; color:#697a96; font-size:11px; padding:8px; }
+.kb-processing-note .spinner,.kb-upload-row .spinner { width:15px; height:15px; flex-shrink:0; }
+.kb-upload-dialog { padding:0; border:1px solid #dfe5ee; border-radius:14px; width:min(690px,calc(100vw - 32px)); max-height:88dvh; background:white; color:#263349; box-shadow:0 24px 100px #132a4933; margin:auto; }
+.kb-upload-dialog::backdrop { background:#15233f66; backdrop-filter:blur(3px); }
+.kb-upload-content { padding:26px; display:flex; flex-direction:column; max-height:86dvh; }
+.kb-upload-content > header { display:flex; align-items:flex-start; gap:16px; margin-bottom:20px; }
+.kb-upload-content > header > div { flex:1; }
+.kb-upload-content h2 { font-size:23px; font-weight:600; letter-spacing:-.5px; margin:6px 0 8px; }
+.kb-upload-content header p { font-size:12px; line-height:1.7; color:#778499; max-width:480px; }
+.kb-dropzone { display:flex; flex-direction:column; align-items:center; gap:6px; padding:24px 16px; flex-shrink:0; border:1px dashed #adbdd6; border-radius:9px; background:#f8faff; transition:border-color .18s,background .18s; }
+.kb-dropzone:hover,.kb-dropzone.dragging { border-color:#385b9b; background:#edf3ff; }
+.kb-dropzone:focus-visible { outline:2px solid #5475b3; outline-offset:3px; }
+.kb-drop-icon { color:#34568d; margin-bottom:4px; }
+.kb-dropzone strong { font-size:14px; font-weight:500; }
+.kb-dropzone > span:not(.kb-drop-icon) { font-size:12px; color:#778499; }
+.kb-dropzone small { font-size:10px; color:#8a95a7; margin-top:8px; }
+.kb-upload-steps { display:flex; justify-content:space-between; gap:10px; padding:17px 5px; flex-shrink:0; }
+.kb-upload-steps span { display:flex; align-items:center; gap:7px; font-size:11px; color:#728097; }
+.kb-upload-steps b { display:grid; place-items:center; width:20px; height:20px; border-radius:50%; background:#f0f3f8; font-size:10px; font-weight:500; }
+.kb-upload-list { overflow:auto; min-height:60px; padding-right:4px; }
+.kb-upload-row { display:flex; align-items:flex-start; gap:12px; padding:15px 2px; border-top:1px solid #edf0f5; animation:kb-appear .2s ease-out; }
+.kb-file-mark { display:grid; place-items:center; background:#f1f4f9; color:#637b9f; width:34px; height:38px; border-radius:5px; flex-shrink:0; }
+.kb-upload-row.ready .kb-file-mark { background:#edf6f1; color:#49856b; }
+.kb-upload-row.error .kb-file-mark { background:#fff1ea; color:#bd603e; }
+.kb-upload-info { flex:1; min-width:0; }
+.kb-upload-info > strong { display:block; font-size:12px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.kb-upload-info > small { display:block; font-size:10px; color:#8b95a6; margin:4px 0; }
+.kb-upload-state { font-size:10px; color:#637b9f; }
+.kb-upload-row.ready .kb-upload-state { color:#49856b; }
+.kb-upload-info progress { display:block; width:100%; height:4px; margin-top:9px; appearance:none; border:0; border-radius:4px; background:#e8edf5; }
+.kb-upload-info progress::-webkit-progress-bar { background:#e8edf5; border-radius:4px; }
+.kb-upload-info progress::-webkit-progress-value { background:#5878ad; border-radius:4px; transition:width .3s; }
+.kb-upload-info progress::-moz-progress-bar { background:#5878ad; border-radius:4px; }
+.kb-upload-actions { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.kb-upload-actions .icon-button { width:26px; height:28px; min-height:28px; color:#8a95a7; }
+.kb-text-button { color:#365b97; font-size:11px; padding:6px 2px; }
+.kb-text-button:hover { text-decoration:underline; }
+.kb-upload-failure { font-size:11px; color:#ad573c; margin-top:7px; line-height:1.6; }
+.kb-upload-notice { font-size:11px!important; line-height:1.7; background:#f6f4ec; border-radius:6px; padding:10px 12px; color:#827247; margin:0 0 12px; }
+.kb-upload-empty { text-align:center; font-size:12px; color:#8a95a7; padding:20px 0; }
+.kb-upload-content > footer { display:flex; align-items:center; gap:9px; padding-top:18px; margin-top:8px; border-top:1px solid #edf0f5; font-size:10px; color:#8491a5; flex-shrink:0; }
+.kb-upload-content > footer span { flex:1; line-height:1.6; }
+.kb-upload-content > footer button { min-height:32px; font-size:12px; padding:6px 16px; }
+.kb-delete-confirm { margin-top:10px; padding:9px; background:#fff4ef; border-radius:5px; font-size:11px; }
+.kb-delete-confirm span { display:block; margin-bottom:6px; }
+.kb-delete-confirm button { margin-right:14px; color:#9c4636; text-decoration:underline; }
+.kb-skeleton { height:110px; margin:16px 0; border-radius:7px; background:linear-gradient(90deg,#edf0f5 25%,#f9fafc 50%,#edf0f5 75%); background-size:200% 100%; animation:kb-shimmer 1.5s infinite; }
+.kb-reader-loading { margin-top:40px; color:#7b899e; font-size:12px; }
+.kb-reader-loading .kb-skeleton { height:320px; }
+@keyframes kb-shimmer { to { background-position:-200% 0; } }
+@keyframes kb-appear { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+@media(max-width:520px) { .kb-upload-content { padding:18px; } .kb-upload-content h2 { font-size:20px; } .kb-upload-steps { gap:5px; } .kb-upload-steps span { font-size:9px; gap:4px; } .kb-upload-content > footer > svg { display:none; } .kb-upload-row { gap:8px; } }
+@media(prefers-reduced-motion:reduce) { .kb-upload-dialog * { animation:none!important; transition:none!important; } }

@@ -34,5 +34,6 @@ def get_db() -> Generator[Session, None, None]:
 def init_db() -> None:
     # Импорт моделей для metadata
     from app.domains.auth import models as _auth  # noqa: F401
+    from app.domains.knowledge import models as _knowledge  # noqa: F401
 
     Base.metadata.create_all(bind=engine)

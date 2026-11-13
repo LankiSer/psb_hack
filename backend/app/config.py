@@ -32,6 +32,7 @@ class Settings(BaseSettings):
 
     app_host: str = "0.0.0.0"
     app_port: int = 8000
+    cors_origins: str = "http://127.0.0.1:3000,http://localhost:3000"
 
     ollama_base_url: str = "http://localhost:11434"
     ollama_chat_model: str = "qwen3:4b"
@@ -39,7 +40,7 @@ class Settings(BaseSettings):
     ollama_keep_alive: str = "15m"
     ollama_embed_model: str = "nomic-embed-text"
 
-    qdrant_url: str = "http://localhost:6333"
+    qdrant_url: str = "http://localhost:6335"
     qdrant_collection_npa: str = "npa"
     qdrant_collection_practice: str = "practice"
 

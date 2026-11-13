@@ -1,16 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, ApiError, getToken, setToken } from "@/shared/api/client";
 import Brand from "@/shared/ui/Brand";
 import Icon from "@/shared/ui/Icon";
 import AccountDialog from "@/shared/ui/AccountDialog";
+import KnowledgeUploads, { useKnowledgeUploads } from "@/shared/ui/KnowledgeUploads";
 
-type Doc = { id: string; title: string; category: string; text?: string; line_count: number };
+type Doc = { id: string; title: string; category: string; text?: string; line_count: number; uploaded?: boolean; upload_id?: string };
 type Source = { id: string; document_id: string; title: string; quote: string; line_start: number; line_end: number };
-type Reply = { answer: string; status: string; sources: Source[] };
+type Reply = { answer: string; status: string; sources: Source[]; retrieval_warning?: string };
 type Turn = { id: number; question: string; reply?: Reply; error?: string };
 const examples = ["Какая арендная плата по договору с Северным Складом?", "Как изменился порядок согласования договоров в 2025 году?", "Какой срок оплаты по договору П-17/2024 после допсоглашения?"];
 
@@ -27,6 +28,8 @@ export default function KnowledgePage() {
   const [error, setError] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [opening, setOpening] = useState(false);
   const menuButton = useRef<HTMLButtonElement>(null);
   const drawer = useRef<HTMLElement>(null);
   const sequence = useRef(0);
@@ -50,23 +53,30 @@ export default function KnowledgePage() {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [menuOpen]);
-  useEffect(() => {
+  const refreshDocuments = useCallback(async () => {
     if (!getToken()) { router.replace("/login"); return; }
-    api<Doc[]>("/api/knowledge/documents").then(setDocs).catch(e => {
+    try {
+      const rows = await api<Doc[]>("/api/knowledge/documents");
+      setDocs(rows);
+      setSelected(current => current && rows.some(d => d.id === current.id) ? current : null);
+    } catch (e) {
       if (e instanceof ApiError && e.status === 401) router.replace("/login");
-      else setError(e.message);
-    }).finally(() => setLoading(false));
+      else setError(e instanceof Error ? e.message : "Не удалось загрузить базу");
+    } finally { setLoading(false); }
   }, [router]);
+  const uploads = useKnowledgeUploads(refreshDocuments);
+  useEffect(() => { void refreshDocuments(); }, [refreshDocuments]);
   useEffect(() => { messagesEnd.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [turns, busy]);
   useEffect(() => { evidenceRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }, [selected, source]);
 
   async function openDocument(id: string, evidence: Source | null = null) {
     const request = ++loadSequence.current;
-    setError("");
+    setError(""); setOpening(true);
     try {
       const doc = await api<Doc>(`/api/knowledge/documents/${id}`);
       if (request === loadSequence.current) { setSelected(doc); setSource(evidence); setMenuOpen(false); }
-    } catch (e) { setError(e instanceof Error ? e.message : "Не удалось открыть документ"); }
+    } catch (e) { if (request === loadSequence.current) setError(e instanceof Error ? e.message : "Не удалось открыть документ"); }
+    finally { if (request === loadSequence.current) setOpening(false); }
   }
   async function ask(value = question) {
     if (!value.trim() || busy) return;
@@ -87,22 +97,23 @@ export default function KnowledgePage() {
   }
   return <main className="kb-app">
     <header className="kb-header"><button ref={menuButton} className="icon-button" aria-label="Открыть меню" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}><Icon name="menu"/></button><Link href="/knowledge"><Brand/></Link><nav><Link className="active" href="/knowledge">База знаний</Link></nav><span className="kb-case-label">Юридический ассистент</span></header>
-    {menuOpen && <div className="kb-menu-overlay"><button className="kb-menu-backdrop" aria-label="Закрыть меню" onClick={() => { setMenuOpen(false); menuButton.current?.focus(); }}/><aside className="kb-menu" ref={drawer} role="dialog" aria-modal="true" aria-label="Меню рабочего пространства"><header><Brand/><button className="icon-button" aria-label="Закрыть навигацию" onClick={() => { setMenuOpen(false); menuButton.current?.focus(); }}><Icon name="close"/></button></header><button className="button primary kb-new-chat" disabled={busy} onClick={() => { setTurns([]); setMenuOpen(false); }}><Icon name="plus" size={18}/>Новый диалог</button><Link className="nav-item active" href="/knowledge" onClick={() => setMenuOpen(false)}><Icon name="doc"/>База знаний</Link><div className="kb-mobile-docs"><h3>Документы базы</h3>{docs.map(d => <button key={d.id} onClick={() => void openDocument(d.id)}>{d.title}</button>)}</div><footer><button className="nav-item" onClick={() => { setMenuOpen(false); setAccountOpen(true); }}><Icon name="settings"/>Настройки аккаунта</button><button className="nav-item" onClick={() => { setToken(null); router.replace("/login"); }}><Icon name="exit"/>Выйти</button></footer></aside></div>}
+    {menuOpen && <div className="kb-menu-overlay"><button className="kb-menu-backdrop" aria-label="Закрыть меню" onClick={() => { setMenuOpen(false); menuButton.current?.focus(); }}/><aside className="kb-menu" ref={drawer} role="dialog" aria-modal="true" aria-label="Меню рабочего пространства"><header><Brand/><button className="icon-button" aria-label="Закрыть навигацию" onClick={() => { setMenuOpen(false); menuButton.current?.focus(); }}><Icon name="close"/></button></header><button className="button primary kb-new-chat" onClick={() => { setMenuOpen(false); setUploadOpen(true); }}><Icon name="upload" size={18}/>Добавить документы</button><button className="nav-item" disabled={busy} onClick={() => { setTurns([]); setMenuOpen(false); }}><Icon name="plus" size={18}/>Новый диалог</button><Link className="nav-item active" href="/knowledge" onClick={() => setMenuOpen(false)}><Icon name="doc"/>База знаний</Link><div className="kb-mobile-docs"><h3>Документы базы</h3>{docs.map(d => <button key={d.id} onClick={() => void openDocument(d.id)}>{d.title}</button>)}</div><footer><button className="nav-item" onClick={() => { setMenuOpen(false); setAccountOpen(true); }}><Icon name="settings"/>Настройки аккаунта</button><button className="nav-item" onClick={() => { setToken(null); router.replace("/login"); }}><Icon name="exit"/>Выйти</button></footer></aside></div>}
+    {uploadOpen && <KnowledgeUploads state={uploads} onClose={() => setUploadOpen(false)} onOpen={id => void openDocument(id)}/>}
     {accountOpen && <AccountDialog onClose={() => { setAccountOpen(false); menuButton.current?.focus(); }}/>}
     <div className="kb-layout">
-      <aside className="kb-library"><h2>Источники <span>{docs.length}</span></h2><label className="kb-search"><Icon name="search" size={16}/><input aria-label="Найти документ" placeholder="Найти документ" value={query} onChange={e => setQuery(e.target.value)}/></label>
-        {loading && <p role="status">Загружаем базу…</p>}
-        {["Документы компании", "Законы"].map(category => <section key={category}><h3>{category}</h3>{docs.filter(d => d.category === category && d.title.toLowerCase().includes(query.toLowerCase())).map(d => <button key={d.id} className={selected?.id === d.id ? "active" : ""} onClick={() => void openDocument(d.id)}><Icon name="doc" size={16}/><span>{d.title}</span></button>)}</section>)}
+      <aside className="kb-library"><h2>Источники <span>{docs.length}</span></h2><button className="kb-add-documents" onClick={() => setUploadOpen(true)}><Icon name="upload" size={16}/>Добавить документы{uploads.active > 0 && <span className="kb-count">{uploads.active}</span>}</button><label className="kb-search"><Icon name="search" size={16}/><input aria-label="Найти документ" placeholder="Найти документ" value={query} onChange={e => setQuery(e.target.value)}/></label>
+        {loading && <div className="kb-skeleton" role="status" aria-label="Загрузка базы знаний"/>}{uploads.active > 0 && <button className="kb-processing-note" onClick={() => setUploadOpen(true)}><span className="spinner"/>Обрабатываем: {uploads.active}</button>}
+        {["Мои документы", "Документы компании", "Законы"].map(category => <section key={category}><h3>{category}</h3>{docs.filter(d => (category === "Мои документы" ? d.uploaded : !d.uploaded && d.category === category) && d.title.toLowerCase().includes(query.toLowerCase())).map(d => <button key={d.id} className={selected?.id === d.id ? "active" : ""} onClick={() => void openDocument(d.id)}><Icon name="doc" size={16}/><span>{d.title}</span></button>)}</section>)}
         {!loading && !docs.some(d => d.title.toLowerCase().includes(query.toLowerCase())) && <p>Документы не найдены</p>}
-        <p className="kb-library-note">Учебная база кейса. Законы представлены только в предоставленной редакции.</p>
+        <p className="kb-library-note">Общая база и ваши документы. В ответы включаются только обработанные источники.</p>
       </aside>
       <section className={`kb-reader ${selected ? "has-document" : ""}`} aria-label="Просмотр источника">
         {error && <div className="error-banner" role="alert">{error}<button onClick={() => setError("")}>Закрыть</button></div>}
-        {selected ? <><header><div><small>{selected.category}</small><h1>{selected.title}</h1></div><button className="icon-button" aria-label="Закрыть документ" onClick={() => { setSelected(null); setSource(null); }}><Icon name="close"/></button></header><article className="kb-paper">{selected.text?.split("\n").map((line, i) => <p key={`${selected.id}-${i}`} ref={i + 1 === source?.line_start ? evidenceRef : undefined} className={source && i + 1 >= source.line_start && i + 1 <= source.line_end ? "kb-highlight" : ""}><span className="kb-line">{i + 1}</span>{line || "\u00a0"}</p>)}</article></> : <div className="kb-welcome"><span className="kb-welcome-icon"><Icon name="doc" size={32}/></span><span className="landing-eyebrow">ОТ ВОПРОСА К ОСНОВАНИЮ</span><h1>Правовой вывод.<br/>Проверяемый источник.</h1><p>Спросите о договоре, норме или регламенте. Здесь откроется документ с положениями, на которых основан ответ.</p><div className="kb-facts"><span><strong>21</strong>документ базы</span><span><strong>2</strong>редакции регламента</span><span><strong>0</strong>внешних источников</span></div><p className="kb-muted">Откройте документ слева или задайте вопрос в чате.</p></div>}
+        {opening ? <div className="kb-reader-loading" role="status"><span className="spinner"/><p>Открываем источник…</p><div className="kb-skeleton"/></div> : selected ? <><header><div><small>{selected.category}</small><h1>{selected.title}</h1></div><button className="icon-button" aria-label="Закрыть документ" onClick={() => { setSelected(null); setSource(null); }}><Icon name="close"/></button></header><article className="kb-paper">{selected.text?.split("\n").map((line, i) => <p key={`${selected.id}-${i}`} ref={i + 1 === source?.line_start ? evidenceRef : undefined} className={source && i + 1 >= source.line_start && i + 1 <= source.line_end ? "kb-highlight" : ""}><span className="kb-line">{i + 1}</span>{line || "\u00a0"}</p>)}</article></> : <div className="kb-welcome"><span className="kb-welcome-icon"><Icon name="doc" size={32}/></span><span className="landing-eyebrow">ОТ ВОПРОСА К ОСНОВАНИЮ</span><h1>Правовой вывод.<br/>Проверяемый источник.</h1><p>Спросите о договоре, норме или регламенте. Здесь откроется документ с положениями, на которых основан ответ.</p><div className="kb-facts"><span><strong>{docs.length}</strong>источников в базе</span><span><strong>{docs.filter(d => d.uploaded).length}</strong>ваших документов</span><span><strong>0</strong>внешних источников</span></div><p className="kb-muted">Откройте документ слева или задайте вопрос в чате.</p></div>}
       </section>
-      <section className="kb-chat" aria-label="Чат по базе знаний"><header><Icon name="spark" size={18}/><div><strong>Юридический помощник</strong><small>Ответы по базе кейса</small></div><button className="icon-button" disabled={busy || !turns.length} aria-label="Новый диалог" title="Новый диалог" onClick={() => setTurns([])}><Icon name="plus"/></button></header><div className="kb-messages" aria-live="polite">
+      <section className="kb-chat" aria-label="Чат по базе знаний"><header><Icon name="spark" size={18}/><div><strong>Юридический помощник</strong><small>Ответы по вашим источникам</small></div><button className="icon-button" disabled={busy || !turns.length} aria-label="Новый диалог" title="Новый диалог" onClick={() => setTurns([])}><Icon name="plus"/></button></header><div className="kb-messages" aria-live="polite">
         {!turns.length && <div className="kb-starters"><h2>Что нужно проверить?</h2><p>Укажите договор, дату события и вопрос — это поможет выбрать нужную редакцию.</p>{examples.map(q => <button key={q} onClick={() => void ask(q)}>{q}<span>↗</span></button>)}</div>}
-        {turns.map(t => <div key={t.id} className="kb-turn"><div className="kb-user">{t.question}</div>{t.reply && <div className="kb-answer"><span className="kb-status">{({ answer: "Ответ с источниками", insufficient: "Недостаточно данных", clarification: "Нужно уточнение", out_of_scope: "Вне базы знаний" })[t.reply.status]}</span><p>{answer(t.reply)}</p>{t.reply.sources.length > 0 && <details><summary>Подтверждающие положения · {t.reply.sources.length}</summary>{t.reply.sources.map((s, i) => <button key={`${s.id}-${i}`} onClick={() => void openDocument(s.document_id, s)}><strong>{i+1}. {s.title}</strong><blockquote>{s.quote}</blockquote><small>Открыть в документе ↗</small></button>)}</details>}</div>}{t.error && <div role="alert" className="kb-error">{t.error}<button disabled={busy} onClick={() => void ask(t.question)}>Повторить</button></div>}</div>)}
+        {turns.map(t => <div key={t.id} className="kb-turn"><div className="kb-user">{t.question}</div>{t.reply && <div className="kb-answer"><span className="kb-status">{({ answer: "Ответ с источниками", insufficient: "Недостаточно данных", clarification: "Нужно уточнение", out_of_scope: "Вне базы знаний" })[t.reply.status]}</span><p>{answer(t.reply)}</p>{t.reply.retrieval_warning && <p className="kb-upload-notice" role="status">{t.reply.retrieval_warning}</p>}{t.reply.sources.length > 0 && <details><summary>Подтверждающие положения · {t.reply.sources.length}</summary>{t.reply.sources.map((s, i) => <button key={`${s.id}-${i}`} onClick={() => void openDocument(s.document_id, s)}><strong>{i+1}. {s.title}</strong><blockquote>{s.quote}</blockquote><small>Открыть в документе ↗</small></button>)}</details>}</div>}{t.error && <div role="alert" className="kb-error">{t.error}<button disabled={busy} onClick={() => void ask(t.question)}>Повторить</button></div>}</div>)}
         {busy && <div className="kb-progress" role="status"><span className="spinner"/>Ищу положения и проверяю ссылки…</div>}<div ref={messagesEnd}/>
       </div><form className="kb-composer" onSubmit={e => { e.preventDefault(); void ask(); }}><textarea aria-label="Вопрос по базе знаний" placeholder="Спросите по документам…" value={question} maxLength={4000} onChange={e => setQuestion(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void ask(); } }}/><div><small>Только предоставленные источники</small><button className="button primary" disabled={busy || !question.trim()} aria-label="Отправить вопрос">↑</button></div></form></section>
     </div>

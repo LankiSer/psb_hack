@@ -8,9 +8,15 @@ from app.domains.auth.models import User
 from app.domains.auth.security import decode_access_token
 from app.domains.auth.service import AuthService
 from app.shared.db import get_db
+from app.shared.db import SessionLocal
+from app.domains.knowledge.service import UploadService
 from app.shared.ollama.client import OllamaClient
 
 bearer = HTTPBearer(auto_error=False)
+
+@lru_cache
+def get_upload_service() -> UploadService:
+    return UploadService(get_settings(),SessionLocal)
 
 def get_auth_service(db: Session = Depends(get_db)) -> AuthService:
     return AuthService(db, get_settings())
