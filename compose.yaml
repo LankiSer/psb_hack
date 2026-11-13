@@ -1,0 +1,23 @@
+name: psb-docs
+services:
+  backend:
+    build: ./backend
+    ports: ["8000:8000"]
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in the root .env}
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-qwen3:4b}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: ["accounts:/app/data"]
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://127.0.0.1:8000}
+    ports: ["3000:3000"]
+    depends_on: [backend]
+volumes:
+  accounts:
