@@ -3,6 +3,8 @@ import asyncio
 import csv
 import io
 import os
+import sys
+import time
 from pathlib import Path
 from xml.etree import ElementTree
 from zipfile import ZipFile
@@ -43,19 +45,21 @@ async def main():
     deadline = asyncio.get_running_loop().time() + 1100
     async def answer(row):
         async with semaphore:
+            started = time.monotonic()
             fragments = kb.search(row["question"])
             try:
                 remaining = deadline - asyncio.get_running_loop().time()
                 if remaining <= 0:
                     raise TimeoutError("Лимит времени сабмита")
-                result = await asyncio.wait_for(checked_answer(row["question"], [], fragments, generate_remote), timeout=min(180, remaining))
+                result = await asyncio.wait_for(checked_answer(row["question"], [], fragments, generate_remote, kb.catalog), timeout=min(180, remaining))
                 text = result["answer"]
                 for source in result["sources"]:
                     text = text.replace("["+source["id"]+"]", "["+source["title"]+", строки "+str(source["line_start"])+"–"+str(source["line_end"])+"]")
+                print(f"ID {row['id']}: status={result['status']} sources={len(result['sources'])} seconds={time.monotonic()-started:.1f}", file=sys.stderr, flush=True)
                 return row["id"], text[:10000]
             except Exception as exc:
                 # Техническая ошибка не маскируется под отсутствие правовой нормы.
-                print(f"ID {row['id']}: {type(exc).__name__}", flush=True)
+                print(f"ID {row['id']}: {type(exc).__name__} seconds={time.monotonic()-started:.1f}", file=sys.stderr, flush=True)
                 return row["id"], "Техническая ошибка: не удалось сформировать проверяемый ответ."
     answers = await asyncio.gather(*(answer(row) for row in rows))
     with Path("submission.csv").open("w", encoding="utf-8", newline="") as f:

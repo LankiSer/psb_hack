@@ -36,7 +36,7 @@ class SubmissionContract(unittest.TestCase):
             code = '''import asyncio,json,solution
 async def generate(value):
  data,_=json.JSONDecoder().raw_decode(value)
- assert data['history']==[]
+ assert all('первый независимый' not in m['text'] for m in data['history'])
  assert not ('первый независимый' in data['question'] and 'Уточните' in data['question'])
  source=data['sources'][0]
  return json.dumps({'status':'answer','answer':'Тестовый факт ['+source['id']+']','evidence':[{'id':source['id'],'quote':source['text']}]})

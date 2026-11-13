@@ -46,12 +46,13 @@ def document(document_id: str):
 @router.post("/ask")
 async def ask(body: Question, ollama: OllamaClient = Depends(get_ollama)):
     history = [m.model_dump() for m in body.history]
-    query = " ".join(m.text for m in body.history[-4:] if m.role == "user") + " " + body.question
+    # Явная структура диалога позволяет поиску отличить последнее уточнение от старых реплик.
+    query = "\n".join(("Пользователь: " if m.role == "user" else "Ассистент: ") + m.text for m in body.history[-6:]) + "\nПользователь: " + body.question
     fragments = knowledge().search(query)
     try:
         async def generate(user_prompt):
             return await generate_remote(user_prompt) if env("LLM_BASE_URL", "OPENAI_BASE_URL", "BASE_URL") else await ollama.chat(SYSTEM, user_prompt, max_tokens=5000, schema=SCHEMA, reasoning=True)
-        return await checked_answer(body.question, history, fragments, generate)
+        return await checked_answer(body.question, history, fragments, generate, knowledge().catalog)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
     except (httpx.HTTPError, RuntimeError, KeyError):

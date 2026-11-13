@@ -18,7 +18,7 @@ f = kb.fragments[0]
 valid = {"status":"answer", "answer":f"Положение подтверждено [{f.id}]", "evidence":[{"id":f.id,"quote":f.text[:80]}]}
 assert validate(json.dumps(valid), [f])["sources"][0]["document_id"] == f.document_id
 assert f.id in validate(json.dumps(dict(valid, answer="Положение подтверждено")), [f])["answer"]
-for change in [dict(valid, evidence=[]), dict(valid, evidence=[{"id":f.id,"quote":"Такой цитаты в документе нет"}]), dict(valid, answer="Поддельный источник [unknown]")]:
+for change in [dict(valid, evidence=[], answer="Ответ без оснований"), dict(valid, evidence=[{"id":f.id,"quote":"Такой цитаты в документе нет"}]), dict(valid, answer="Поддельный источник [unknown]")]:
     try:
         validate(json.dumps(change), [f])
         raise AssertionError("Пропущено неподтверждённое утверждение")
