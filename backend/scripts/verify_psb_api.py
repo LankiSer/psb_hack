@@ -10,6 +10,8 @@ class FakeOllama:
         payload,_=json.JSONDecoder().raw_decode(prompt)
         assert payload['question']=='А гарантия?'
         assert payload['history'][-1]['text']=='Договор с Альфа-Трейдинг'
+        if 'sources' not in payload:
+            return json.dumps({'queries':['гарантия изготовителя'],'documents':[]})
         source=payload['sources'][0]
         assert 'Альфа-Трейдинг' in source['title']
         return json.dumps({'status':'answer','answer':'Положение ['+source['id']+']','evidence':[{'id':source['id']}]})

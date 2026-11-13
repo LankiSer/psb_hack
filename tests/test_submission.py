@@ -34,10 +34,12 @@ class SubmissionContract(unittest.TestCase):
                 writer.writerow(["second", "Пользователь: Документ?\nАссистент: Уточните.\nПользователь: Тестовый факт?"])
             # Подменяем только генерацию: поиск, JSON-проверка, изоляция и CSV настоящие.
             code = '''import asyncio,json,solution
-async def generate(value):
+async def generate(value,**kwargs):
  data,_=json.JSONDecoder().raw_decode(value)
  assert all('первый независимый' not in m['text'] for m in data['history'])
  assert not ('первый независимый' in data['question'] and 'Уточните' in data['question'])
+ if 'catalog' in data and 'sources' not in data:
+  return json.dumps({'queries':['Тестовый факт'],'documents':[]})
  source=data['sources'][0]
  return json.dumps({'status':'answer','answer':'Тестовый факт ['+source['id']+']','evidence':[{'id':source['id'],'quote':source['text']}]})
 solution.generate_remote=generate

@@ -9,7 +9,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 from zipfile import ZipFile
 
-from psb_engine import KnowledgeBase, checked_answer, generate_remote
+from psb_engine import KnowledgeBase, answer_question, generate_remote, PLANNER_SYSTEM
 
 
 def load_documents(path):
@@ -40,18 +40,19 @@ async def main():
         rows = list(csv.DictReader(f))
     if not rows or any(not row.get("id") or not row.get("question") for row in rows) or len({row["id"] for row in rows}) != len(rows):
         raise ValueError("Нужны уникальные id и непустые question")
-    semaphore = asyncio.Semaphore(max(1,min(8,int(os.environ.get("MAX_WORKERS", "2")))))
+    semaphore = asyncio.Semaphore(max(1,min(8,int(os.environ.get("MAX_WORKERS", "4")))))
     # Оставляем время на запись CSV до лимита платформы в 20 минут.
     deadline = asyncio.get_running_loop().time() + 1100
     async def answer(row):
         async with semaphore:
             started = time.monotonic()
-            fragments = kb.search(row["question"])
             try:
                 remaining = deadline - asyncio.get_running_loop().time()
                 if remaining <= 0:
                     raise TimeoutError("Лимит времени сабмита")
-                result = await asyncio.wait_for(checked_answer(row["question"], [], fragments, generate_remote, kb.catalog), timeout=min(180, remaining))
+                async def planner(value):
+                    return await generate_remote(value,system=PLANNER_SYSTEM,max_tokens=1000)
+                result = await asyncio.wait_for(answer_question(kb,row["question"],[],generate_remote,planner), timeout=min(180, remaining))
                 text = result["answer"]
                 for source in result["sources"]:
                     text = text.replace("["+source["id"]+"]", "["+source["title"]+", строки "+str(source["line_start"])+"–"+str(source["line_end"])+"]")

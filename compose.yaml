@@ -7,6 +7,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in the root .env}
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-qwen3:4b}
+      RAG_QUERY_EXPANSION: ${RAG_QUERY_EXPANSION:-1}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-}

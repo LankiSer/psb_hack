@@ -5,7 +5,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
-from psb_engine import KnowledgeBase, checked_answer, prompt, split_dialogue, validate
+from psb_engine import KnowledgeBase, checked_answer, prompt, split_dialogue, validate, answer_question, qualify_missing_references
 
 
 class EngineTests(unittest.TestCase):
@@ -67,6 +67,69 @@ class EngineTests(unittest.TestCase):
     def test_context_has_bounded_size(self):
         kb=KnowledgeBase([(f'законы__Закон{i}.txt',f'Правило {i}.\n'+('Налоги и платежи.\n'*650)) for i in range(15)])
         self.assertLessEqual(sum(len(f.text) for f in kb.search('Налоги и платежи')),30000)
+
+    def test_distant_parent_rule_is_kept_with_list_item(self):
+        body='Статья 41.\n1. Первая норма.\n2. Льгота применяется при условии регистрации:\n'
+        body+='1) категория первая;\n'+('Заполнитель без ключевых слов.\n'*400)
+        body+='2) уникальные лабораторные приборы;\n3. Другая норма.'
+        kb=KnowledgeBase([('законы__НК_ст41.txt',body)])
+        sources=kb.search('Уникальные лабораторные приборы')
+        self.assertTrue(any('Льгота применяется при условии регистрации' in f.text for f in sources))
+        for f in sources:
+            self.assertIn(f.text,body)
+            if f.id.endswith('section'):
+                self.assertEqual(f.text,'\n'.join(body.splitlines()[f.line_start-1:f.line_end]))
+
+    def test_passage_never_inherits_previous_clause_rate(self):
+        body='1. Первая ставка 1 процент.\n'+('Список первой категории.\n'*300)
+        body+='2. Вторая ставка 8 процентов.\n'+('Особые приборы второй категории.\n'*300)
+        kb=KnowledgeBase([('законы__НК_ст42.txt',body)])
+        matches=[f for f in kb.fragments if 'Особые приборы' in f.text]
+        self.assertTrue(matches)
+        self.assertTrue(all(f.heading=='2. Вторая ставка 8 процентов.' for f in matches))
+        f=next(f for f in matches if f.heading not in f.text)
+        result=validate(json.dumps({'status':'answer','answer':'Условие [S1]','evidence':[{'id':'S1','quote':f.heading}]}),[f])
+        source=result['sources'][0]
+        self.assertEqual(source['line_start'],f.heading_line)
+        self.assertEqual(body.splitlines()[source['line_start']-1],source['quote'])
+
+    def test_short_answer_gets_only_verified_explanation(self):
+        kb=KnowledgeBase([('документы компании__Условие.txt','Срок составляет 17 дней с даты передачи.')])
+        result=validate(json.dumps({'status':'answer','answer':'17 дней [S1]','evidence':[]}),kb.fragments)
+        self.assertIn('Основание: «Срок составляет 17 дней с даты передачи.»',result['answer'])
+
+    def test_missing_referenced_articles_are_disclosed(self):
+        kb=KnowledgeBase([('законы__АК_ст31.txt','Статья 31. Правило со ссылкой на статьи 77, 78 и 79.')])
+        result=validate(json.dumps({'status':'answer','answer':'Условия определяют статьи 77, 78 и 79. [S1]','evidence':[]}),kb.fragments)
+        result=qualify_missing_references(result,kb.catalog)
+        self.assertIn('тексты статей 77, 78, 79',result['answer'])
+
+    def test_existing_article_not_described_as_missing(self):
+        kb=KnowledgeBase([('законы__АК_ст31.txt','Статья 31. Отсылка к статье 77.'),('законы__АК_ст77.txt','Статья 77. Условия.')])
+        result=validate(json.dumps({'status':'answer','answer':'См. статью 77. [S1]','evidence':[]}),kb.fragments[:1])
+        result=qualify_missing_references(result,kb.catalog)
+        self.assertNotIn('Ограничение базы',result['answer'])
+
+    def test_reference_to_different_code_is_not_mislabelled(self):
+        kb=KnowledgeBase([('законы__НК_ст31.txt','Статья 31. Отсылка к статье 77 ГК РФ.')])
+        result=validate(json.dumps({'status':'answer','answer':'Отсылка к статье 77 ГК РФ. [S1]','evidence':[]}),kb.fragments)
+        self.assertNotIn('Ограничение базы',qualify_missing_references(result,kb.catalog)['answer'])
+
+    def test_failed_planner_preserves_answer(self):
+        async def planner(value): raise TimeoutError('fixture')
+        async def generate(value): return json.dumps({'status':'answer','answer':'Условие [S1]','evidence':[]})
+        result=asyncio.run(answer_question(self.kb,'Лира гарантия',[],generate,planner))
+        self.assertEqual(result['status'],'answer')
+
+    def test_planner_uses_only_existing_documents(self):
+        async def planner(value):
+            return json.dumps({'queries':['гарантия изготовителя'],'documents':['D9999']})
+        async def generate(value):
+            payload=json.loads(value)
+            self.assertTrue(any('Гарантию устанавливает' in f['text'] for f in payload['sources']))
+            self.assertNotIn('D9999',value)
+            return json.dumps({'status':'answer','answer':'Условие [S1]','evidence':[]})
+        asyncio.run(answer_question(self.kb,'Как устроено обслуживание?',[],generate,planner))
 
     def test_valid_answer_not_regenerated(self):
         calls=[]

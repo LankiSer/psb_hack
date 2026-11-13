@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.api.psb_deps import get_current_user, get_ollama
 from app.shared.ollama.client import OllamaClient
-from psb_engine import KnowledgeBase, SYSTEM, SCHEMA, checked_answer, env, generate_remote
+from psb_engine import KnowledgeBase, SYSTEM, SCHEMA, PLANNER_SYSTEM, PLAN_SCHEMA, answer_question, env, generate_remote
 
 load_dotenv(Path(__file__).resolve().parents[3] / ".env", override=False)
 
@@ -46,13 +46,12 @@ def document(document_id: str):
 @router.post("/ask")
 async def ask(body: Question, ollama: OllamaClient = Depends(get_ollama)):
     history = [m.model_dump() for m in body.history]
-    # Явная структура диалога позволяет поиску отличить последнее уточнение от старых реплик.
-    query = "\n".join(("Пользователь: " if m.role == "user" else "Ассистент: ") + m.text for m in body.history[-6:]) + "\nПользователь: " + body.question
-    fragments = knowledge().search(query)
     try:
         async def generate(user_prompt):
             return await generate_remote(user_prompt) if env("LLM_BASE_URL", "OPENAI_BASE_URL", "BASE_URL") else await ollama.chat(SYSTEM, user_prompt, max_tokens=5000, schema=SCHEMA, reasoning=True)
-        return await checked_answer(body.question, history, fragments, generate, knowledge().catalog)
+        async def planner(value):
+            return await generate_remote(value,system=PLANNER_SYSTEM,max_tokens=1000) if env("LLM_BASE_URL", "OPENAI_BASE_URL", "BASE_URL") else await ollama.chat(PLANNER_SYSTEM,value,max_tokens=1000,schema=PLAN_SCHEMA,reasoning=False)
+        return await answer_question(knowledge(),body.question,history,generate,planner)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
     except (httpx.HTTPError, RuntimeError, KeyError):
