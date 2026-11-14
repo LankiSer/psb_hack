@@ -175,5 +175,38 @@ html[data-reduce-motion="true"] .kb-app * { scroll-behavior:auto!important; anim
 .kb-reader-loading .kb-skeleton { height:320px; }
 @keyframes kb-shimmer { to { background-position:-200% 0; } }
 @keyframes kb-appear { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+/* Компактные вкладки и спокойное движение рабочего пространства. */
+.kb-chat { min-width:0; }
+.kb-session-bar { display:flex; align-items:center; gap:4px; padding:5px 8px 0; border-bottom:1px solid #e3e8f0; background:#f7f9fc; flex-shrink:0; }
+.kb-session-tabs { display:flex; flex:1; min-width:0; overflow:auto; scrollbar-width:thin; position:relative; }
+.kb-session { display:flex; align-items:center; flex:0 0 auto; max-width:190px; border:1px solid transparent; border-bottom:0; border-radius:6px 6px 0 0; color:#7a879b; background:transparent; transition:background .18s,color .18s,opacity .18s; animation:kb-appear .2s ease-out; }
+.kb-session.active { color:#243c7c; background:white; border-color:#e3e8f0; box-shadow:inset 0 2px #526fa7; }
+.kb-session.dragging { opacity:.45; }
+.kb-session > button[role="tab"] { display:flex; align-items:center; gap:7px; min-width:0; padding:11px 8px 11px 10px; font-size:11px; cursor:grab; }
+.kb-session > button[role="tab"]:active { cursor:grabbing; }
+.kb-session > button[role="tab"] > span:last-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:125px; }
+.kb-session svg { flex-shrink:0; }
+.kb-session .spinner { width:12px; height:12px; flex-shrink:0; }
+.kb-session-close { display:grid; place-items:center; width:24px; height:24px; border-radius:4px; margin-right:4px; opacity:.45; flex-shrink:0; }
+.kb-session:hover .kb-session-close,.kb-session:focus-within .kb-session-close { opacity:1; }
+.kb-session-close:hover { background:#e8edf6; }
+.kb-session-bar > .icon-button { width:28px; height:30px; min-height:30px; flex-shrink:0; }
+.kb-app button,.kb-app a { transition:background-color .16s ease,color .16s ease,border-color .16s ease,box-shadow .16s ease,opacity .16s ease; }
+.kb-composer { transition:border-color .2s,box-shadow .2s; }
+.kb-messages,.kb-paper,.kb-welcome,.kb-reader-loading,.kb-answer,.kb-turn,.kb-error,.kb-progress { animation:kb-appear .24s ease-out both; }
+.kb-answer details[open] > button { animation:kb-appear .2s ease-out both; }
+.kb-starters button:hover { transform:translateY(-1px); }
+.kb-starters button { transition:transform .18s,background-color .18s,border-color .18s; }
+.kb-menu { animation:kb-drawer-in .24s cubic-bezier(.2,.8,.2,1) both; }
+.kb-menu-backdrop { animation:kb-fade-in .24s ease both; }
+.kb-menu-overlay.is-closing .kb-menu { animation:kb-drawer-out .2s ease both; }
+.kb-menu-overlay.is-closing .kb-menu-backdrop { animation:kb-fade-out .2s ease both; }
+.kb-upload-dialog[open],.account-dialog[open] { animation:kb-dialog-in .22s cubic-bezier(.2,.8,.2,1) both; }
+.kb-upload-dialog[open]::backdrop,.account-dialog[open]::backdrop { animation:kb-fade-in .22s ease both; }
+@keyframes kb-fade-in { from { opacity:0; } to { opacity:1; } }
+@keyframes kb-fade-out { to { opacity:0; } }
+@keyframes kb-drawer-in { from { opacity:.5; transform:translateX(-32px); } to { opacity:1; transform:translateX(0); } }
+@keyframes kb-drawer-out { to { opacity:0; transform:translateX(-32px); } }
+@keyframes kb-dialog-in { from { opacity:0; transform:translateY(10px) scale(.985); } to { opacity:1; transform:none; } }
 @media(max-width:520px) { .kb-upload-content { padding:18px; } .kb-upload-content h2 { font-size:20px; } .kb-upload-steps { gap:5px; } .kb-upload-steps span { font-size:9px; gap:4px; } .kb-upload-content > footer > svg { display:none; } .kb-upload-row { gap:8px; } }
 @media(prefers-reduced-motion:reduce) { .kb-upload-dialog * { animation:none!important; transition:none!important; } }

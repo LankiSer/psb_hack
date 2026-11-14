@@ -8,6 +8,10 @@ import httpx
 from app.config import Settings
 
 
+class IncompleteAnswerError(RuntimeError):
+    """Модель ответила, но не завершила итоговый текст."""
+
+
 class OllamaClient:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -91,14 +95,14 @@ class OllamaClient:
                 await asyncio.sleep(1.5 * (attempt + 1))
         raise RuntimeError(f"Ollama embed failed: {last_error}")
 
-    async def chat(self, system: str, user: str, max_tokens: int = 768, schema: dict | None = None, reasoning: bool = False) -> str:
+    async def chat(self, system: str, user: str, max_tokens: int = 768, schema: dict | None = None, reasoning: bool = False, num_ctx: int | None = None) -> str:
         # 0. Сборка сообщений
         payload = {
             "model": self._settings.ollama_chat_model,
             "stream": False,
             "think": reasoning,
             "keep_alive": self._settings.ollama_keep_alive,
-            "options": {"num_ctx": self._settings.ollama_num_ctx, "num_predict": 1024, "temperature": 0.3},
+            "options": {"num_ctx": num_ctx or self._settings.ollama_num_ctx, "num_predict": 1024, "temperature": 0.3},
             "messages": [
                 {"role": "system", "content": system + ("\nВерни JSON по схеме. Поле answer содержит только готовый ответ пользователю, без внутренних рассуждений, планирования и тегов think." if schema is None else "")},
                 {"role": "user", "content": user + ("" if reasoning else "\n/no_think")},
@@ -116,9 +120,13 @@ class OllamaClient:
             data = response.json()
 
         # 2. Ответ
+        if data.get("done_reason") == "length":
+            raise IncompleteAnswerError("Ollama output token limit reached")
         text = data.get("message", {}).get("content", "").strip()
         if "</think>" in text:
             text = text.split("</think>", 1)[1]
+        if not text.strip():
+            raise IncompleteAnswerError("Ollama returned no final answer")
         if schema is None:
             text = json.loads(text)["answer"]
             if "</think>" in text:

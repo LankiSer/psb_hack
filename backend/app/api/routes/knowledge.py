@@ -6,13 +6,14 @@ from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 import asyncio
+import re
 from pydantic import BaseModel, Field
 
 from app.api.psb_deps import get_current_user, get_ollama, get_upload_service
 from app.domains.knowledge.service import UploadService
 from app.domains.auth.models import User
-from app.shared.ollama.client import OllamaClient
-from psb_engine import KnowledgeBase, SYSTEM, SCHEMA, PLANNER_SYSTEM, PLAN_SCHEMA, answer_question, env, generate_remote
+from app.shared.ollama.client import OllamaClient, IncompleteAnswerError
+from psb_engine import KnowledgeBase, SYSTEM, SCHEMA, PLANNER_SYSTEM, PLAN_SCHEMA, answer_question, env, generate_remote, contract_ids
 
 load_dotenv(Path(__file__).resolve().parents[3] / ".env", override=False)
 
@@ -56,15 +57,25 @@ async def ask(body: Question, ollama: OllamaClient = Depends(get_ollama),user: U
     try:
         kb=await asyncio.to_thread(uploads.make_knowledge,Path(__file__).resolve().parents[3]/'psb_data/knowledge-base',user.id)
         retrieval_hints,warning=await uploads.hints(user.id,body.question)
+        remote = bool(env("LLM_BASE_URL", "OPENAI_BASE_URL", "BASE_URL"))
         async def generate(user_prompt):
-            return await generate_remote(user_prompt) if env("LLM_BASE_URL", "OPENAI_BASE_URL", "BASE_URL") else await ollama.chat(SYSTEM, user_prompt, max_tokens=5000, schema=SCHEMA, reasoning=True)
+            # Быстрый локальный чат: бюджет целиком на ответ, а не скрытое рассуждение.
+            return await generate_remote(user_prompt) if remote else await ollama.chat(SYSTEM, user_prompt, max_tokens=1600, schema=SCHEMA, reasoning=False, num_ctx=16384)
         async def planner(value):
-            return await generate_remote(value,system=PLANNER_SYSTEM,max_tokens=1000) if env("LLM_BASE_URL", "OPENAI_BASE_URL", "BASE_URL") else await ollama.chat(PLANNER_SYSTEM,value,max_tokens=1000,schema=PLAN_SCHEMA,reasoning=False)
-        result=await answer_question(kb,body.question,history,generate,planner,retrieval_hints)
+            return await generate_remote(value,system=PLANNER_SYSTEM,max_tokens=1000) if remote else await ollama.chat(PLANNER_SYSTEM,value,max_tokens=350,schema=PLAN_SCHEMA,reasoning=False,num_ctx=16384)
+        # Для явно указанного договора обычный поиск уже выбирает его и допсоглашения.
+        focused = bool(contract_ids(body.question)) and not re.search(r'стать|закон|кодекс|\b(?:ТК|НК|ГК|КоАП)\b',body.question,re.I)
+        plan = planner if remote or not focused else None
+        result=await asyncio.wait_for(answer_question(kb,body.question,history,generate,plan,retrieval_hints,
+            search_limit=2 if focused and not remote else 8),timeout=150 if remote else 75)
         if warning: result['retrieval_warning']=warning
         return result
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from None
+    except ValueError:
+        raise HTTPException(503, "Не удалось проверить ответ модели. Попробуйте уточнить вопрос и повторить запрос.") from None
+    except TimeoutError:
+        raise HTTPException(504, "Модель отвечает дольше обычного. Попробуйте задать более короткий вопрос.") from None
+    except IncompleteAnswerError:
+        raise HTTPException(503, "Модель не завершила ответ. Попробуйте задать вопрос короче или повторить запрос.") from None
     except (httpx.HTTPError, RuntimeError, KeyError):
         raise HTTPException(503, "Модель недоступна. Повторите запрос позже.") from None
 

@@ -379,7 +379,7 @@ def grounded_queries(queries: list, question: str, history: list[dict]) -> list[
     return result
 
 
-async def answer_question(kb: KnowledgeBase, question: str, history: list[dict], generate, planner=None, retrieval_hints=None) -> dict:
+async def answer_question(kb: KnowledgeBase, question: str, history: list[dict], generate, planner=None, retrieval_hints=None, search_limit: int = 8) -> dict:
     """Один ограниченный шаг уточнения поиска; при его ошибке сохраняем обычный поиск."""
     combined = json.dumps([*history,{"role":"user","text":question}],ensure_ascii=False) if history else question
     retrieval_hints=retrieval_hints or {}
@@ -401,7 +401,7 @@ async def answer_question(kb: KnowledgeBase, question: str, history: list[dict],
         except (ValueError,TypeError,TimeoutError,httpx.HTTPError,RuntimeError,KeyError):
             # План — оптимизация, сбой сервиса не должен превращать отвечаемый вопрос в отказ.
             pass
-    fragments = kb.search(combined,extra_queries=extra,preferred_documents=preferred,preferred_fragments=retrieval_hints.get('fragments',[]))
+    fragments = kb.search(combined,limit=search_limit,extra_queries=extra,preferred_documents=preferred,preferred_fragments=retrieval_hints.get('fragments',[]))
     result = await checked_answer(question,history,fragments,generate,kb.catalog)
     return qualify_missing_references(result,kb.catalog)
 

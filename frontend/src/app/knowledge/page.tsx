@@ -6,13 +6,12 @@ import { useRouter } from "next/navigation";
 import { api, ApiError, getToken, setToken } from "@/shared/api/client";
 import Brand from "@/shared/ui/Brand";
 import Icon from "@/shared/ui/Icon";
+import usePresence from "@/shared/ui/usePresence";
 import AccountDialog from "@/shared/ui/AccountDialog";
 import KnowledgeUploads, { useKnowledgeUploads } from "@/shared/ui/KnowledgeUploads";
+import ChatSessions, { useChatSessions, reducedMotion, type Source, type Reply } from "@/shared/ui/ChatSessions";
 
 type Doc = { id: string; title: string; category: string; text?: string; line_count: number; uploaded?: boolean; upload_id?: string };
-type Source = { id: string; document_id: string; title: string; quote: string; line_start: number; line_end: number };
-type Reply = { answer: string; status: string; sources: Source[]; retrieval_warning?: string };
-type Turn = { id: number; question: string; reply?: Reply; error?: string };
 const examples = ["Какая арендная плата по договору с Северным Складом?", "Как изменился порядок согласования договоров в 2025 году?", "Какой срок оплаты по договору П-17/2024 после допсоглашения?"];
 
 export default function KnowledgePage() {
@@ -21,18 +20,20 @@ export default function KnowledgePage() {
   const [selected, setSelected] = useState<Doc | null>(null);
   const [source, setSource] = useState<Source | null>(null);
   const [query, setQuery] = useState("");
-  const [question, setQuestion] = useState("");
-  const [turns, setTurns] = useState<Turn[]>([]);
-  const [busy, setBusy] = useState(false);
+  const chat = useChatSessions();
+  const { draft: question, turns, busy } = chat.active;
+  const setQuestion = chat.setDraft;
+  const ask = chat.ask;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [opening, setOpening] = useState(false);
+  const menuVisible = usePresence(menuOpen);
   const menuButton = useRef<HTMLButtonElement>(null);
   const drawer = useRef<HTMLElement>(null);
-  const sequence = useRef(0);
+
   const loadSequence = useRef(0);
   const messagesEnd = useRef<HTMLDivElement>(null);
   const evidenceRef = useRef<HTMLParagraphElement>(null);
@@ -66,8 +67,8 @@ export default function KnowledgePage() {
   }, [router]);
   const uploads = useKnowledgeUploads(refreshDocuments);
   useEffect(() => { void refreshDocuments(); }, [refreshDocuments]);
-  useEffect(() => { messagesEnd.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [turns, busy]);
-  useEffect(() => { evidenceRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }, [selected, source]);
+  useEffect(() => { messagesEnd.current?.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "end" }); }, [turns, busy, chat.activeId]);
+  useEffect(() => { evidenceRef.current?.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "center" }); }, [selected, source]);
 
   async function openDocument(id: string, evidence: Source | null = null) {
     const request = ++loadSequence.current;
@@ -78,17 +79,6 @@ export default function KnowledgePage() {
     } catch (e) { if (request === loadSequence.current) setError(e instanceof Error ? e.message : "Не удалось открыть документ"); }
     finally { if (request === loadSequence.current) setOpening(false); }
   }
-  async function ask(value = question) {
-    if (!value.trim() || busy) return;
-    const id = ++sequence.current;
-    const history = turns.filter(t => t.reply).slice(-4).flatMap(t => [{ role: "user", text: t.question }, { role: "assistant", text: t.reply!.answer }]);
-    setTurns(prev => [...prev, { id, question: value.trim() }]); setQuestion(""); setBusy(true);
-    try {
-      const reply = await api<Reply>("/api/knowledge/ask", { method: "POST", body: JSON.stringify({ question: value.trim(), history }) });
-      setTurns(prev => prev.map(t => t.id === id ? { ...t, reply } : t));
-    } catch (e) { setTurns(prev => prev.map(t => t.id === id ? { ...t, error: e instanceof Error ? e.message : "Не удалось получить ответ" } : t)); }
-    finally { setBusy(false); }
-  }
   function answer(reply: Reply) {
     return reply.answer.split(/(\[[^\]]+\])/g).map((part, index) => {
       const citation = reply.sources.find(s => `[${s.id}]` === part);
@@ -97,7 +87,7 @@ export default function KnowledgePage() {
   }
   return <main className="kb-app">
     <header className="kb-header"><button ref={menuButton} className="icon-button" aria-label="Открыть меню" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}><Icon name="menu"/></button><Link href="/knowledge"><Brand/></Link><nav><Link className="active" href="/knowledge">База знаний</Link></nav><span className="kb-case-label">Юридический ассистент</span></header>
-    {menuOpen && <div className="kb-menu-overlay"><button className="kb-menu-backdrop" aria-label="Закрыть меню" onClick={() => { setMenuOpen(false); menuButton.current?.focus(); }}/><aside className="kb-menu" ref={drawer} role="dialog" aria-modal="true" aria-label="Меню рабочего пространства"><header><Brand/><button className="icon-button" aria-label="Закрыть навигацию" onClick={() => { setMenuOpen(false); menuButton.current?.focus(); }}><Icon name="close"/></button></header><button className="button primary kb-new-chat" onClick={() => { setMenuOpen(false); setUploadOpen(true); }}><Icon name="upload" size={18}/>Добавить документы</button><button className="nav-item" disabled={busy} onClick={() => { setTurns([]); setMenuOpen(false); }}><Icon name="plus" size={18}/>Новый диалог</button><Link className="nav-item active" href="/knowledge" onClick={() => setMenuOpen(false)}><Icon name="doc"/>База знаний</Link><div className="kb-mobile-docs"><h3>Документы базы</h3>{docs.map(d => <button key={d.id} onClick={() => void openDocument(d.id)}>{d.title}</button>)}</div><footer><button className="nav-item" onClick={() => { setMenuOpen(false); setAccountOpen(true); }}><Icon name="settings"/>Настройки аккаунта</button><button className="nav-item" onClick={() => { setToken(null); router.replace("/login"); }}><Icon name="exit"/>Выйти</button></footer></aside></div>}
+    {menuVisible && <div className={`kb-menu-overlay ${menuOpen ? "" : "is-closing"}`} inert={!menuOpen}><button className="kb-menu-backdrop" aria-label="Закрыть меню" onClick={() => { setMenuOpen(false); menuButton.current?.focus(); }}/><aside className="kb-menu" ref={drawer} role="dialog" aria-modal="true" aria-label="Меню рабочего пространства"><header><Brand/><button className="icon-button" aria-label="Закрыть навигацию" onClick={() => { setMenuOpen(false); menuButton.current?.focus(); }}><Icon name="close"/></button></header><button className="button primary kb-new-chat" onClick={() => { setMenuOpen(false); setUploadOpen(true); }}><Icon name="upload" size={18}/>Добавить документы</button><button className="nav-item" disabled={!chat.ready} onClick={() => { chat.create(); setMenuOpen(false); }}><Icon name="plus" size={18}/>Новый диалог</button><Link className="nav-item active" href="/knowledge" onClick={() => setMenuOpen(false)}><Icon name="doc"/>База знаний</Link><div className="kb-mobile-docs"><h3>Документы базы</h3>{docs.map(d => <button key={d.id} onClick={() => void openDocument(d.id)}>{d.title}</button>)}</div><footer><button className="nav-item" onClick={() => { setMenuOpen(false); setAccountOpen(true); }}><Icon name="settings"/>Настройки аккаунта</button><button className="nav-item" onClick={() => { setToken(null); router.replace("/login"); }}><Icon name="exit"/>Выйти</button></footer></aside></div>}
     {uploadOpen && <KnowledgeUploads state={uploads} onClose={() => setUploadOpen(false)} onOpen={id => void openDocument(id)}/>}
     {accountOpen && <AccountDialog onClose={() => { setAccountOpen(false); menuButton.current?.focus(); }}/>}
     <div className="kb-layout">
@@ -109,13 +99,13 @@ export default function KnowledgePage() {
       </aside>
       <section className={`kb-reader ${selected ? "has-document" : ""}`} aria-label="Просмотр источника">
         {error && <div className="error-banner" role="alert">{error}<button onClick={() => setError("")}>Закрыть</button></div>}
-        {opening ? <div className="kb-reader-loading" role="status"><span className="spinner"/><p>Открываем источник…</p><div className="kb-skeleton"/></div> : selected ? <><header><div><small>{selected.category}</small><h1>{selected.title}</h1></div><button className="icon-button" aria-label="Закрыть документ" onClick={() => { setSelected(null); setSource(null); }}><Icon name="close"/></button></header><article className="kb-paper">{selected.text?.split("\n").map((line, i) => <p key={`${selected.id}-${i}`} ref={i + 1 === source?.line_start ? evidenceRef : undefined} className={source && i + 1 >= source.line_start && i + 1 <= source.line_end ? "kb-highlight" : ""}><span className="kb-line">{i + 1}</span>{line || "\u00a0"}</p>)}</article></> : <div className="kb-welcome"><span className="kb-welcome-icon"><Icon name="doc" size={32}/></span><span className="landing-eyebrow">ОТ ВОПРОСА К ОСНОВАНИЮ</span><h1>Правовой вывод.<br/>Проверяемый источник.</h1><p>Спросите о договоре, норме или регламенте. Здесь откроется документ с положениями, на которых основан ответ.</p><div className="kb-facts"><span><strong>{docs.length}</strong>источников в базе</span><span><strong>{docs.filter(d => d.uploaded).length}</strong>ваших документов</span><span><strong>0</strong>внешних источников</span></div><p className="kb-muted">Откройте документ слева или задайте вопрос в чате.</p></div>}
+        {opening ? <div className="kb-reader-loading" role="status"><span className="spinner"/><p>Открываем источник…</p><div className="kb-skeleton"/></div> : selected ? <><header><div><small>{selected.category}</small><h1>{selected.title}</h1></div><button className="icon-button" aria-label="Закрыть документ" onClick={() => { setSelected(null); setSource(null); }}><Icon name="close"/></button></header><article key={selected.id} className="kb-paper">{selected.text?.split("\n").map((line, i) => <p key={`${selected.id}-${i}`} ref={i + 1 === source?.line_start ? evidenceRef : undefined} className={source && i + 1 >= source.line_start && i + 1 <= source.line_end ? "kb-highlight" : ""}><span className="kb-line">{i + 1}</span>{line || "\u00a0"}</p>)}</article></> : <div className="kb-welcome"><span className="kb-welcome-icon"><Icon name="doc" size={32}/></span><span className="landing-eyebrow">ОТ ВОПРОСА К ОСНОВАНИЮ</span><h1>Правовой вывод.<br/>Проверяемый источник.</h1><p>Спросите о договоре, норме или регламенте. Здесь откроется документ с положениями, на которых основан ответ.</p><div className="kb-facts"><span><strong>{docs.length}</strong>источников в базе</span><span><strong>{docs.filter(d => d.uploaded).length}</strong>ваших документов</span><span><strong>0</strong>внешних источников</span></div><p className="kb-muted">Откройте документ слева или задайте вопрос в чате.</p></div>}
       </section>
-      <section className="kb-chat" aria-label="Чат по базе знаний"><header><Icon name="spark" size={18}/><div><strong>Юридический помощник</strong><small>Ответы по вашим источникам</small></div><button className="icon-button" disabled={busy || !turns.length} aria-label="Новый диалог" title="Новый диалог" onClick={() => setTurns([])}><Icon name="plus"/></button></header><div className="kb-messages" aria-live="polite">
+      <section className="kb-chat" aria-label="Чат по базе знаний"><header><Icon name="spark" size={18}/><div><strong>Юридический помощник</strong><small>Ответы по вашим источникам</small></div></header><ChatSessions chat={chat}/>{chat.notice && <p className="kb-upload-notice" role="status">{chat.notice}</p>}<div key={chat.activeId} id="chat-panel" role="tabpanel" aria-labelledby={`tab-${chat.activeId}`} className="kb-messages" aria-live="polite">
         {!turns.length && <div className="kb-starters"><h2>Что нужно проверить?</h2><p>Укажите договор, дату события и вопрос — это поможет выбрать нужную редакцию.</p>{examples.map(q => <button key={q} onClick={() => void ask(q)}>{q}<span>↗</span></button>)}</div>}
         {turns.map(t => <div key={t.id} className="kb-turn"><div className="kb-user">{t.question}</div>{t.reply && <div className="kb-answer"><span className="kb-status">{({ answer: "Ответ с источниками", insufficient: "Недостаточно данных", clarification: "Нужно уточнение", out_of_scope: "Вне базы знаний" })[t.reply.status]}</span><p>{answer(t.reply)}</p>{t.reply.retrieval_warning && <p className="kb-upload-notice" role="status">{t.reply.retrieval_warning}</p>}{t.reply.sources.length > 0 && <details><summary>Подтверждающие положения · {t.reply.sources.length}</summary>{t.reply.sources.map((s, i) => <button key={`${s.id}-${i}`} onClick={() => void openDocument(s.document_id, s)}><strong>{i+1}. {s.title}</strong><blockquote>{s.quote}</blockquote><small>Открыть в документе ↗</small></button>)}</details>}</div>}{t.error && <div role="alert" className="kb-error">{t.error}<button disabled={busy} onClick={() => void ask(t.question)}>Повторить</button></div>}</div>)}
         {busy && <div className="kb-progress" role="status"><span className="spinner"/>Ищу положения и проверяю ссылки…</div>}<div ref={messagesEnd}/>
-      </div><form className="kb-composer" onSubmit={e => { e.preventDefault(); void ask(); }}><textarea aria-label="Вопрос по базе знаний" placeholder="Спросите по документам…" value={question} maxLength={4000} onChange={e => setQuestion(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void ask(); } }}/><div><small>Только предоставленные источники</small><button className="button primary" disabled={busy || !question.trim()} aria-label="Отправить вопрос">↑</button></div></form></section>
+      </div><form className="kb-composer" onSubmit={e => { e.preventDefault(); void ask(); }}><textarea aria-label="Вопрос по базе знаний" placeholder="Спросите по документам…" value={question} maxLength={4000} onChange={e => setQuestion(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void ask(); } }}/><div><small>Только предоставленные источники</small><button className="button primary" disabled={!chat.ready || busy || !question.trim()} aria-label="Отправить вопрос">↑</button></div></form></section>
     </div>
   </main>;
 }
