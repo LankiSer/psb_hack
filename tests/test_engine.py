@@ -5,10 +5,70 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
-from psb_engine import KnowledgeBase, checked_answer, prompt, split_dialogue, validate, answer_question, qualify_missing_references
+from psb_engine import KnowledgeBase, checked_answer, prompt, split_dialogue, validate, answer_question, qualify_missing_references, grounded_queries, review_issues
 
 
 class EngineTests(unittest.TestCase):
+    def test_planner_does_not_invent_numbers_or_parties(self):
+        values=grounded_queries(['архив срок 5 лет','выдача оригинала на 4 дня','договор ООО «Чужая компания»','выдача оригинала'],
+            'Можно взять оригинал на 4 дня?',[])
+        self.assertEqual(values,['выдача оригинала на 4 дня'])
+
+    def test_planner_keeps_user_history_but_not_assistant_inventions(self):
+        values=grounded_queries(['поставка Р-44/2022','оплата 999 дней'], 'А оплата?',
+            [{'role':'user','text':'Договор Р-44/2022'},{'role':'assistant','text':'999 дней'}])
+        self.assertEqual(values,['поставка Р-44/2022'])
+
+    def test_targeted_review_adds_missing_amendment_citation(self):
+        sources=self.kb.fragments
+        contract=next(i+1 for i,f in enumerate(sources) if 'Р-44-2022 Лира' in f.title)
+        amendment=next(i+1 for i,f in enumerate(sources) if 'Доп соглашение' in f.title)
+        calls=[]
+        async def generate(value):
+            calls.append(value)
+            answer=f'Дополнительное соглашение изменяет срок оплаты. [S{contract}]'
+            if len(calls)>1:answer+=f' [S{amendment}]'
+            return json.dumps({'status':'answer','answer':answer,'evidence':[]})
+        result=asyncio.run(checked_answer('Оплата?',[],sources,generate))
+        self.assertEqual(len(calls),2)
+        self.assertEqual(len(result['sources']),2)
+
+    def test_failed_review_preserves_verified_draft(self):
+        calls=[]
+        async def generate(value):
+            calls.append(value)
+            if len(calls)>1:raise TimeoutError()
+            return json.dumps({'status':'answer','answer':'Дата 31.02.2025 [S1]','evidence':[]})
+        result=asyncio.run(checked_answer('Дата?',[],self.kb.fragments,generate))
+        self.assertEqual(len(calls),2)
+        self.assertEqual(result['status'],'answer')
+
+    def test_review_cannot_turn_supported_answer_into_refusal(self):
+        calls=[]
+        async def generate(value):
+            calls.append(value)
+            if len(calls)>1:return json.dumps({'status':'insufficient','answer':'Нет данных','evidence':[]})
+            return json.dumps({'status':'answer','answer':'Дата 31.02.2025 [S1]','evidence':[]})
+        result=asyncio.run(checked_answer('Дата?',[],self.kb.fragments,generate))
+        self.assertEqual(result['status'],'answer')
+
+    def test_categorical_question_checks_conditional_rule(self):
+        kb=KnowledgeBase([('Условия.txt','Продление допускается при наличии разрешения. Отмена не описана.')])
+        calls=[]
+        async def generate(value):
+            calls.append(value)
+            text='Отмена допускается при наличии разрешения.' if len(calls)==1 else 'Условие разрешения относится к продлению; порядок отмены не описан.'
+            return json.dumps({'status':'answer','answer':text+' [S1]','evidence':[]})
+        result=asyncio.run(checked_answer('Значит, обязаны сразу отменить?',[],kb.fragments,generate))
+        self.assertEqual(len(calls),2)
+        self.assertIn('относится к продлению',result['answer'])
+
+    def test_absence_of_conditions_is_not_disclosure_of_missing_articles(self):
+        kb=KnowledgeBase([('законы__АК_ст31.txt','При наличии оснований статьи 32 допускается продление.')])
+        result=validate(json.dumps({'status':'answer','answer':'При отсутствии оснований статьи 32 продление не допускается [S1]','evidence':[]}),kb.fragments)
+        result=qualify_missing_references(result,kb.catalog)
+        self.assertIn('Ограничение базы',result['answer'])
+
     def test_parenthetical_source_is_validated_and_resolved(self):
         source=self.kb.fragments[0]
         result=validate(json.dumps({'status':'answer','answer':'Условия описаны в документе (S1).','evidence':[]}),[source])
