@@ -10,6 +10,7 @@ from xml.etree import ElementTree
 from zipfile import ZipFile
 
 from psb_engine import KnowledgeBase, answer_question, generate_remote, PLANNER_SYSTEM
+from psb_retrieval import RemoteRetrieval
 
 
 def load_documents(path):
@@ -43,6 +44,9 @@ async def main():
     semaphore = asyncio.Semaphore(max(1,min(8,int(os.environ.get("MAX_WORKERS", "4")))))
     # Оставляем время на запись CSV до лимита платформы в 20 минут.
     deadline = asyncio.get_running_loop().time() + 1100
+    retrieval = RemoteRetrieval(kb)
+    ready = await retrieval.prepare()
+    print(f"Semantic retrieval: {'ready' if ready else 'lexical fallback'}",file=sys.stderr,flush=True)
     async def answer(row):
         async with semaphore:
             started = time.monotonic()
@@ -52,7 +56,10 @@ async def main():
                     raise TimeoutError("Лимит времени сабмита")
                 async def planner(value):
                     return await generate_remote(value,system=PLANNER_SYSTEM,max_tokens=1000)
-                result = await asyncio.wait_for(answer_question(kb,row["question"],[],generate_remote,planner), timeout=min(180, remaining))
+                async def process():
+                    hints = await retrieval.hints(row['question'])
+                    return await answer_question(kb,row["question"],[],generate_remote,planner,retrieval_hints=hints)
+                result = await asyncio.wait_for(process(), timeout=min(180, remaining))
                 text = result["answer"]
                 for source in result["sources"]:
                     text = text.replace("["+source["id"]+"]", "["+source["title"]+", строки "+str(source["line_start"])+"–"+str(source["line_end"])+"]")

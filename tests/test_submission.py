@@ -21,7 +21,7 @@ class SubmissionContract(unittest.TestCase):
             root = Path(temp)
             archive = build(root / "submit.zip")
             with ZipFile(archive) as z:
-                self.assertEqual(set(z.namelist()), {"solution.py", "psb_engine.py", "requirements.txt"})
+                self.assertEqual(set(z.namelist()), {"solution.py", "psb_engine.py", "psb_retrieval.py", "requirements.txt"})
                 z.extractall(root / "run")
             data = root / "data"
             data.mkdir()
@@ -45,7 +45,7 @@ async def generate(value,**kwargs):
 solution.generate_remote=generate
 asyncio.run(solution.main())
 '''
-            result = subprocess.run([sys.executable, "-c", code], cwd=root / "run", env={**os.environ, "DATA_DIR": str(data)}, capture_output=True, text=True, timeout=30)
+            result = subprocess.run([sys.executable, "-c", code], cwd=root / "run", env={**os.environ, "DATA_DIR": str(data),"RAG_SEMANTIC":"0"}, capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
             with (root / "run/submission.csv").open(encoding="utf-8", newline="") as f:
                 reader = csv.DictReader(f)

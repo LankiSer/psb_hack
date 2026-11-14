@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import time
 import httpx
+import importlib.util
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'backend'))
@@ -19,7 +20,23 @@ async def main():
     parser.add_argument('--model',default='qwen3:4b')
     parser.add_argument('--questions',default='backend/psb_data/demo_questions.csv')
     parser.add_argument('--no-plan',action='store_true')
+    parser.add_argument('--engine',help='Путь к сохранённой версии движка для сравнения на тех же вопросах')
     args=parser.parse_args()
+    global KnowledgeBase, SYSTEM, SCHEMA, PLANNER_SYSTEM, PLAN_SCHEMA, answer_question
+    if args.engine:
+        spec=importlib.util.spec_from_file_location('comparison_engine',args.engine)
+        module=importlib.util.module_from_spec(spec)
+        sys.modules[spec.name]=module
+        spec.loader.exec_module(module)
+        KnowledgeBase,SYSTEM,SCHEMA=module.KnowledgeBase,module.SYSTEM,module.SCHEMA
+        if hasattr(module,'answer_question'):
+            answer_question=module.answer_question
+        else:
+            async def legacy_answer(kb,question,history,generate):
+                return await module.checked_answer(question,history,kb.search(question),generate,kb.catalog)
+            answer_question=legacy_answer
+        PLANNER_SYSTEM=getattr(module,'PLANNER_SYSTEM',PLANNER_SYSTEM)
+        PLAN_SCHEMA=getattr(module,'PLAN_SCHEMA',PLAN_SCHEMA)
     kb=KnowledgeBase.from_path(ROOT/'backend/psb_data/knowledge-base')
     source=ROOT/args.questions
     questions=json.loads(source.read_text(encoding='utf-8')) if source.suffix=='.json' else list(csv.DictReader(source.open(encoding='utf-8-sig')))
@@ -46,7 +63,8 @@ async def main():
             raw_plans.clear()
             start=time.monotonic()
             try:
-                result=await asyncio.wait_for(answer_question(kb,row['question'],[],generate,None if args.no_plan else planner),timeout=180)
+                call=answer_question(kb,row['question'],[],generate) if args.no_plan else answer_question(kb,row['question'],[],generate,planner)
+                result=await asyncio.wait_for(call,timeout=180)
                 out={'id':row['id'],'status':result['status'],'answer':result['answer'],'sources':len(result['sources'])}
             except Exception as exc:out={'id':row['id'],'error':str(exc)}
             out['seconds']=round(time.monotonic()-start,1);results.append(out)

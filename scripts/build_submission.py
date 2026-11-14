@@ -10,11 +10,11 @@ def build(output: Path | None = None) -> Path:
     output = output or ROOT / "dist" / "psb-submission.zip"
     output.parent.mkdir(parents=True, exist_ok=True)
     with ZipFile(output, "w", ZIP_DEFLATED) as archive:
-        for name in ("solution.py", "psb_engine.py"):
+        for name in ("solution.py", "psb_engine.py", "psb_retrieval.py"):
             archive.write(ROOT / "backend" / name, name)
         archive.write(ROOT / "requirements.txt", "requirements.txt")
     with ZipFile(output) as archive:
-        assert set(archive.namelist()) == {"solution.py", "psb_engine.py", "requirements.txt"}
+        assert set(archive.namelist()) == {"solution.py", "psb_engine.py", "psb_retrieval.py", "requirements.txt"}
         assert archive.testzip() is None
     if output.stat().st_size > 128 * 1024 * 1024:
         raise ValueError("Архив превышает 128 МБ")

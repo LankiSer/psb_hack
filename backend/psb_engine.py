@@ -38,6 +38,9 @@ governing_clause — дословное начало пункта, которо�
 с ограничениями источника: превышение максимума означает 'нет', а не 'да'. Проверяй номера пунктов буквально.
 Не присваивай номера ненумерованным абзацам. Если вывод основан на двух документах, укажи оба ID.
 Отказ при нехватке информации не должен содержать неподтверждённых утверждений о законах.
+Обычно достаточно до 150 слов: сначала ответ на вопрос, затем конкретные условия и ссылки.
+Называй документ и номер пункта или статьи словами, если они прямо указаны в источнике.
+Не перечисляй посторонние нормы и не заменяй ответ общими советами обратиться к юристу.
 """
 
 SCHEMA = {"type":"object", "properties": {
@@ -75,7 +78,16 @@ def expanded_query(text: str) -> str:
         "переработка": "сверхурочная работа",
         "декрет": "беременность роды",
     }
-    return text + " " + " ".join(value for key, value in aliases.items() if re.search(r"(?<!\w)"+re.escape(key)+r"(?!\w)", text, re.I))
+    # Бытовые названия переводятся в термины поиска, без ставок и юридических выводов.
+    families = {
+        r'\b(?:батон|буханк|булочк|булк)\w*': 'хлеб хлебобулочные изделия',
+        r'\b(?:айти|ит-компан|it-компан)\w*': 'организации информационных технологий',
+        r'\bупрощ[её]нк\w*': 'упрощенная система налогообложения',
+        r'\bсверхурочк\w*': 'сверхурочная работа',
+        r'\b(?:персоналк|персданн)\w*': 'персональные данные',
+        r'\bнеустойк\w*': 'неустойка штраф пени',
+    }
+    return text + " " + " ".join(value for key, value in aliases.items() if re.search(r"(?<!\w)"+re.escape(key)+r"(?!\w)", text, re.I)) + " " + " ".join(value for pattern,value in families.items() if re.search(pattern,text,re.I))
 
 
 @dataclass(frozen=True)
@@ -173,8 +185,8 @@ class KnowledgeBase:
         # Выбор планировщика — мягкий сигнал, не разрешение игнорировать исходный вопрос.
         preferred = set(preferred_documents or [])
         scores = [(score*1.25+2 if f.document_id in preferred else score,f) for score,f in scores]
-        hits=set(preferred_fragments or [])
-        scores = [(score+15 if f.id in hits else score,f) for score,f in scores]
+        hits={key:20/(1+index/2) for index,key in enumerate(preferred_fragments or [])}
+        scores = [(score+hits.get(f.id,0),f) for score,f in scores]
         # Явно названная статья имеет приоритет; сохраняем остальные источники для сопоставления.
         article_numbers = re.findall(r'(?:ст(?:атья|атье|атьи|атью)?\.?\s*)(\d+(?:\.\d+)?)', current, re.I)
         codes = re.findall(r'\b(ТК|НК|ГК|КоАП)\b', current, re.I)
@@ -375,6 +387,8 @@ def validate(raw: str, fragments: list[Fragment]) -> dict:
     def resolve(value):return by_id.get(aliases.get(str(value),str(value)))
     items=data.get("evidence",[])
     if not isinstance(items,list):raise ValueError("evidence должен быть списком.")
+    # Модель иногда ставит короткие ID в круглые скобки: проверяем их так же строго.
+    answer=re.sub(r'\((S\d+(?:\s*[,;]\s*S\d+)*)\)',r'[\1]',answer)
     # Допускаем стандартную запись нескольких ссылок [S1, S2], сохраняя строгую проверку ID.
     answer=re.sub(r'\[((?:S\d+\s*[,;]\s*)+S\d+)\]',lambda m:' '.join('['+x+']' for x in re.findall(r'S\d+',m.group(1))),answer)
     refs=re.findall(r"\[([^\]]+)\]",answer)
@@ -438,10 +452,14 @@ async def generate_remote(user_prompt: str, *, system: str = SYSTEM, max_tokens:
     if not all((base, key, model)):
         raise ValueError("Для API организаторов нужны LLM_BASE_URL, LLM_API_KEY и LLM_MODEL.")
     async with httpx.AsyncClient(timeout=120) as client:
-        budget=max(512,min(8192,max_tokens or int(env("MAX_TOKENS") or "4096")))
+        budget=max(512,min(16384,max_tokens or int(env("MAX_TOKENS") or "8192")))
+        # У DeepSeek рассуждение включено по умолчанию: короткий план не должен расходовать на него лимит.
+        deepseek = 'deepseek' in model.lower()
+        options = ({'thinking': {'type': 'disabled'}} if system == PLANNER_SYSTEM else
+                   {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'low'}) if deepseek else {}
         for attempt in range(3):
             try:
-                response = await client.post(base+"/chat/completions", headers={"Authorization": "Bearer "+key}, json={"model":model,"messages":[{"role":"system","content":system},{"role":"user","content":user_prompt}],"temperature":0,"max_tokens":budget})
+                response = await client.post(base+"/chat/completions", headers={"Authorization": "Bearer "+key}, json={"model":model,"messages":[{"role":"system","content":system},{"role":"user","content":user_prompt}],"temperature":0,"max_tokens":budget,**options})
             except (httpx.TimeoutException, httpx.NetworkError):
                 if attempt == 2: raise
                 await asyncio.sleep(1+attempt)
@@ -449,12 +467,18 @@ async def generate_remote(user_prompt: str, *, system: str = SYSTEM, max_tokens:
             if response.status_code in {429,500,502,503,504} and attempt < 2:
                 await asyncio.sleep(1+attempt)
                 continue
+            # Некоторые совместимые прокси не пропускают расширения провайдера.
+            if response.status_code in {400,422} and options and attempt < 2:
+                options = {}
+                continue
             response.raise_for_status()
             choice=response.json()["choices"][0]
             content=choice["message"].get("content") or ""
-            if choice.get("finish_reason")=="length" and attempt<2 and budget<8192:
-                budget=min(8192,budget*2)
-                continue
+            if choice.get("finish_reason")=="length":
+                if attempt<2 and budget<16384:
+                    budget=min(16384,budget*2)
+                    continue
+                raise ValueError("Модель исчерпала лимит токенов до завершения ответа.")
             if not isinstance(content,str) or not content.strip():
                 if attempt<2: continue
                 raise ValueError("Модель вернула пустой ответ.")

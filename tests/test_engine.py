@@ -9,6 +9,14 @@ from psb_engine import KnowledgeBase, checked_answer, prompt, split_dialogue, va
 
 
 class EngineTests(unittest.TestCase):
+    def test_parenthetical_source_is_validated_and_resolved(self):
+        source=self.kb.fragments[0]
+        result=validate(json.dumps({'status':'answer','answer':'Условия описаны в документе (S1).','evidence':[]}),[source])
+        self.assertIn('['+source.id+']',result['answer'])
+        self.assertNotIn('(S1)',result['answer'])
+        with self.assertRaises(ValueError):
+            validate(json.dumps({'status':'answer','answer':'Условия (S99).','evidence':[]}),[source])
+
     def setUp(self):
         self.kb = KnowledgeBase([
             ("документы компании__Договор Р-44-2022 Лира.txt", 'ДОГОВОР № Р-44/2022\nООО «Лира»\n1. Оплата в течение 20 дней.\n2. Гарантия 12 месяцев.'),
