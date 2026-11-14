@@ -21,6 +21,7 @@ async def main():
     parser.add_argument('--questions',default='backend/psb_data/demo_questions.csv')
     parser.add_argument('--no-plan',action='store_true')
     parser.add_argument('--engine',help='Путь к сохранённой версии движка для сравнения на тех же вопросах')
+    parser.add_argument('--fast',action='store_true',help='Ollama без thinking для быстрых регрессионных проверок')
     args=parser.parse_args()
     global KnowledgeBase, SYSTEM, SCHEMA, PLANNER_SYSTEM, PLAN_SCHEMA, answer_question
     if args.engine:
@@ -53,7 +54,7 @@ async def main():
             content=r.json()['message']['content'];raw_plans.append(content)
             return content
         async def generate(value):
-            r=await client.post('http://127.0.0.1:11434/api/chat',json={'model':args.model,'stream':False,'think':True,'format':SCHEMA,'options':{'temperature':0,'num_ctx':24576,'num_predict':5000},'messages':[{'role':'system','content':SYSTEM},{'role':'user','content':value}]})
+            r=await client.post('http://127.0.0.1:11434/api/chat',json={'model':args.model,'stream':False,'think':not args.fast,'format':SCHEMA,'options':{'temperature':0,'num_ctx':24576,'num_predict':1800 if args.fast else 5000},'messages':[{'role':'system','content':SYSTEM},{'role':'user','content':value}]})
             r.raise_for_status()
             content=r.json()['message']['content']
             raw_responses.append(content)

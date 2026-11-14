@@ -5,10 +5,22 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
-from psb_engine import KnowledgeBase, checked_answer, prompt, split_dialogue, validate, answer_question, qualify_missing_references, grounded_queries, review_issues
+from psb_engine import KnowledgeBase, checked_answer, prompt, split_dialogue, validate, answer_question, qualify_missing_references, grounded_queries, review_issues, lexical_deadline_answer
 
 
 class EngineTests(unittest.TestCase):
+    def test_large_parent_sections_do_not_evict_other_answer_passages(self):
+        words=['апельсин','самолет','корвет','монета','платина','янтарь','брусника','василек']
+        docs=[]
+        for word in words:
+            docs.append((f'законы__Правило_{word}.txt','1. Условия применения нормы.\n'+('Общие пояснения без искомого предмета.\n'*320)+f'Особое требование: {word} разрешен при регистрации. '+('Действуют перечисленные ограничения. '*25)))
+        kb=KnowledgeBase(docs)
+        targets=[f.id for f in kb.fragments if 'разрешен при регистрации' in f.text]
+        found=kb.search('Какие требования установлены для '+' '.join(words)+'?',ranked_fragments=targets)
+        text='\n'.join(f.text for f in found)
+        self.assertTrue(all(f'{word} разрешен при регистрации' in text for word in words))
+        self.assertLessEqual(sum(len(f.text) for f in found),30000)
+
     def test_planner_does_not_invent_numbers_or_parties(self):
         values=grounded_queries(['архив срок 5 лет','выдача оригинала на 4 дня','договор ООО «Чужая компания»','выдача оригинала'],
             'Можно взять оригинал на 4 дня?',[])
@@ -247,6 +259,71 @@ class EngineTests(unittest.TestCase):
     def test_grouped_citations(self):
         result=validate(json.dumps({'status':'answer','answer':'Сопоставлены [S1, S2]','evidence':[]}),self.kb.fragments)
         self.assertEqual(len(result['sources']),2)
+
+    def test_review_flags_echoed_question(self):
+        q='Договор на 12 млн рублей заключали в августе 2024 года. Нужно ли было одобрение генерального директора?'
+        result=validate(json.dumps({'status':'answer','answer':q+' [S1]','evidence':[]},ensure_ascii=False),self.kb.fragments)
+        self.assertTrue(any('\u043f\u043e\u0432\u0442\u043e\u0440\u044f\u0435\u0442 \u0432\u043e\u043f\u0440\u043e\u0441' in issue for issue in review_issues(result,self.kb.fragments,q)))
+
+    def test_review_flags_limit_exceedance_yes(self):
+        kb=KnowledgeBase([('archive.txt','\u0412\u044b\u0434\u0430\u0447\u0430 \u043e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u043e\u0432 \u043f\u0440\u043e\u0438\u0437\u0432\u043e\u0434\u0438\u0442\u0441\u044f \u043f\u043e \u0437\u0430\u044f\u0432\u043a\u0435 \u043d\u0430 \u0441\u0440\u043e\u043a \u043d\u0435 \u0431\u043e\u043b\u0435\u0435 3 \u0440\u0430\u0431\u043e\u0447\u0438\u0445 \u0434\u043d\u0435\u0439.')])
+        q='\u041c\u043e\u0436\u043d\u043e \u0432\u0437\u044f\u0442\u044c \u043e\u0440\u0438\u0433\u0438\u043d\u0430\u043b \u0438\u0437 \u0430\u0440\u0445\u0438\u0432\u0430 \u043d\u0430 4 \u0440\u0430\u0431\u043e\u0447\u0438\u0445 \u0434\u043d\u044f?'
+        result=validate(json.dumps({'status':'answer','answer':'\u0414\u0430, \u0432\u044b\u0434\u0430\u0447\u0430 \u043f\u0440\u043e\u0438\u0437\u0432\u043e\u0434\u0438\u0442\u0441\u044f \u043f\u043e \u0437\u0430\u044f\u0432\u043a\u0435. [S1]','evidence':[]},ensure_ascii=False),kb.fragments)
+        self.assertTrue(any('\u043f\u0440\u0435\u0432\u044b\u0448\u0430\u0435\u0442 \u043b\u0438\u043c\u0438\u0442' in issue for issue in review_issues(result,kb.fragments,q)))
+
+    def test_review_does_not_flag_approval_threshold(self):
+        kb=KnowledgeBase([('reg.txt','2.4. \u0414\u043e\u0433\u043e\u0432\u043e\u0440\u044b \u043d\u0430 \u0441\u0443\u043c\u043c\u0443 \u0441\u0432\u044b\u0448\u0435 10 000 000 \u0440\u0443\u0431\u043b\u0435\u0439 \u043f\u043e\u0434\u043b\u0435\u0436\u0430\u0442 \u043e\u0434\u043e\u0431\u0440\u0435\u043d\u0438\u044e \u0433\u0435\u043d\u0435\u0440\u0430\u043b\u044c\u043d\u044b\u043c \u0434\u0438\u0440\u0435\u043a\u0442\u043e\u0440\u043e\u043c.')])
+        q='\u0414\u043e\u0433\u043e\u0432\u043e\u0440 \u043d\u0430 12 \u043c\u043b\u043d \u0440\u0443\u0431\u043b\u0435\u0439 \u0437\u0430\u043a\u043b\u044e\u0447\u0430\u043b\u0438 \u0432 \u0430\u0432\u0433\u0443\u0441\u0442\u0435 2024 \u0433\u043e\u0434\u0430. \u041d\u0443\u0436\u043d\u043e \u043b\u0438 \u0431\u044b\u043b\u043e \u043e\u0434\u043e\u0431\u0440\u0435\u043d\u0438\u0435 \u0433\u0435\u043d\u0435\u0440\u0430\u043b\u044c\u043d\u043e\u0433\u043e \u0434\u0438\u0440\u0435\u043a\u0442\u043e\u0440\u0430?'
+        result=validate(json.dumps({'status':'answer','answer':'\u0414\u0430, \u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043b\u043e\u0441\u044c \u043e\u0434\u043e\u0431\u0440\u0435\u043d\u0438\u0435 \u0433\u0435\u043d\u0435\u0440\u0430\u043b\u044c\u043d\u043e\u0433\u043e \u0434\u0438\u0440\u0435\u043a\u0442\u043e\u0440\u0430. [S1]','evidence':[]},ensure_ascii=False),kb.fragments)
+        self.assertFalse(any('\u043f\u0440\u0435\u0432\u044b\u0448\u0430\u0435\u0442 \u043b\u0438\u043c\u0438\u0442' in issue for issue in review_issues(result,kb.fragments,q)))
+
+    def test_review_flags_invented_notification_duty(self):
+        kb=KnowledgeBase([('pdn.txt','\u0421\u043e\u0433\u043b\u0430\u0441\u0438\u0435 \u043c\u043e\u0436\u0435\u0442 \u0431\u044b\u0442\u044c \u043e\u0442\u043e\u0437\u0432\u0430\u043d\u043e. \u041e\u043f\u0435\u0440\u0430\u0442\u043e\u0440 \u0432\u043f\u0440\u0430\u0432\u0435 \u043f\u0440\u043e\u0434\u043e\u043b\u0436\u0438\u0442\u044c \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0443 \u043f\u0440\u0438 \u043d\u0430\u043b\u0438\u0447\u0438\u0438 \u043e\u0441\u043d\u043e\u0432\u0430\u043d\u0438\u0439.')])
+        answer='\u041d\u0443\u0436\u043d\u043e \u0443\u0432\u0435\u0434\u043e\u043c\u0438\u0442\u044c \u0441\u0443\u0431\u044a\u0435\u043a\u0442\u0430 \u0438 \u0441\u0440\u0430\u0437\u0443 \u0443\u0434\u0430\u043b\u0438\u0442\u044c \u0434\u0430\u043d\u043d\u044b\u0435. [S1]'
+        result=validate(json.dumps({'status':'answer','answer':answer,'evidence':[]},ensure_ascii=False),kb.fragments)
+        issues=review_issues(result,kb.fragments,'\u041e\u0431\u044f\u0437\u0430\u043d\u044b \u043b\u0438 \u0441\u0440\u0430\u0437\u0443 \u0443\u0434\u0430\u043b\u0438\u0442\u044c \u0432\u0441\u0451 \u043f\u043e\u0441\u043b\u0435 \u043e\u0442\u0437\u044b\u0432\u0430 \u0441\u043e\u0433\u043b\u0430\u0441\u0438\u044f?')
+        self.assertTrue(any('\u0443\u0432\u0435\u0434\u043e\u043c' in issue for issue in issues))
+
+    def test_false_insufficient_triggers_review_to_answer(self):
+        kb=KnowledgeBase([('contract PT-05.txt','4.2. \u041f\u0440\u0435\u0434\u043e\u043f\u043b\u0430\u0442\u0430 \u0434\u043e\u043f\u0443\u0441\u043a\u0430\u0435\u0442\u0441\u044f \u043f\u043e \u0441\u043e\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u044e \u0441\u0442\u043e\u0440\u043e\u043d \u0438 \u0443\u043a\u0430\u0437\u044b\u0432\u0430\u0435\u0442\u0441\u044f \u0432 \u0441\u0447\u0451\u0442\u0435.')])
+        calls=[]
+        async def generate(value):
+            calls.append(value)
+            if len(calls)==1:
+                return json.dumps({'status':'insufficient','answer':'Unclear contract.','evidence':[]})
+            return json.dumps({'status':'answer','answer':'\u041f\u0440\u0435\u0434\u043e\u043f\u043b\u0430\u0442\u0430 \u0434\u043e\u043f\u0443\u0441\u043a\u0430\u0435\u0442\u0441\u044f \u043f\u043e \u043f. 4.2. [S1]','evidence':[]},ensure_ascii=False)
+        result=asyncio.run(checked_answer('\u041f\u043e \u0434\u043e\u0433\u043e\u0432\u043e\u0440\u0443 \u0441 \u00ab\u0410\u043b\u044c\u0444\u0430-\u0422\u0440\u0435\u0439\u0434\u0438\u043d\u0433\u00bb \u043c\u043e\u0436\u0435\u043c \u043e\u043f\u043b\u0430\u0442\u0438\u0442\u044c \u0430\u0432\u0430\u043d\u0441\u043e\u043c?',[],kb.fragments,generate))
+        self.assertEqual(len(calls),2)
+        self.assertEqual(result['status'],'answer')
+        self.assertIn('\u041f\u0440\u0435\u0434\u043e\u043f\u043b\u0430\u0442\u0430',result['answer'])
+
+    def test_fast_mode_skips_review(self):
+        calls=[]
+        async def generate(value):
+            calls.append(value)
+            return json.dumps({'status':'answer','answer':'Дата 31.02.2025 [S1]','evidence':[]})
+        result=asyncio.run(checked_answer('Дата?',[],self.kb.fragments,generate,allow_review=False))
+        self.assertEqual(len(calls),1)
+        self.assertEqual(result['status'],'answer')
+
+    def test_fast_mode_skips_planner(self):
+        calls=[]
+        async def generate(value):
+            calls.append(('gen',value))
+            return json.dumps({'status':'answer','answer':'Факт [S1]','evidence':[]})
+        async def planner(value):
+            calls.append(('plan',value))
+            return json.dumps({'queries':['x'],'documents':[]})
+        result=asyncio.run(answer_question(self.kb,'Лира гарантия',[],generate,planner,allow_plan=False,allow_review=False))
+        self.assertTrue(all(kind=='gen' for kind,_ in calls))
+        self.assertEqual(result['status'],'answer')
+
+    def test_lexical_deadline_answer_uses_fragments_not_random(self):
+        result=lexical_deadline_answer(self.kb,'Оплата по договору Р-44/2022')
+        self.assertEqual(result['status'],'answer')
+        self.assertGreater(len(result['sources']),0)
+        self.assertIn('20 дней',result['answer'])
+        self.assertNotRegex(result['answer'],r'^(?:Да|Нет)\.?$')
 
     def test_clause_highlight_uses_real_line(self):
         kb=KnowledgeBase([('документы компании__Порядок.txt','Порядок\n1.1. Первый пункт.\n1.2. Второй пункт.')])
