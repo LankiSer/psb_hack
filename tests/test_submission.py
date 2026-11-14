@@ -21,7 +21,7 @@ class SubmissionContract(unittest.TestCase):
             root = Path(temp)
             archive = build(root / "submit.zip")
             with ZipFile(archive) as z:
-                self.assertEqual(set(z.namelist()), {"solution.py", "psb_engine.py", "psb_retrieval.py", "requirements.txt"})
+                self.assertEqual(set(z.namelist()), {"solution.py", "psb_engine.py", "psb_retrieval.py", "rule_checks.py", "requirements.txt"})
                 z.extractall(root / "run")
             data = root / "data"
             data.mkdir()

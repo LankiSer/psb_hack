@@ -45,7 +45,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(len(calls),2)
         self.assertEqual(len(result['sources']),2)
 
-    def test_failed_review_preserves_verified_draft(self):
+    def test_failed_review_does_not_preserve_impossible_date(self):
         calls=[]
         async def generate(value):
             calls.append(value)
@@ -53,16 +53,18 @@ class EngineTests(unittest.TestCase):
             return json.dumps({'status':'answer','answer':'Дата 31.02.2025 [S1]','evidence':[]})
         result=asyncio.run(checked_answer('Дата?',[],self.kb.fragments,generate))
         self.assertEqual(len(calls),2)
-        self.assertEqual(result['status'],'answer')
+        self.assertEqual(result['status'],'insufficient')
+        self.assertNotIn('31.02.2025',result['answer'])
 
-    def test_review_cannot_turn_supported_answer_into_refusal(self):
+    def test_review_can_correct_invalid_answer_to_insufficient(self):
         calls=[]
         async def generate(value):
             calls.append(value)
             if len(calls)>1:return json.dumps({'status':'insufficient','answer':'Нет данных','evidence':[]})
             return json.dumps({'status':'answer','answer':'Дата 31.02.2025 [S1]','evidence':[]})
         result=asyncio.run(checked_answer('Дата?',[],self.kb.fragments,generate))
-        self.assertEqual(result['status'],'answer')
+        self.assertEqual(result['status'],'insufficient')
+        self.assertNotIn('31.02.2025',result['answer'])
 
     def test_categorical_question_checks_conditional_rule(self):
         kb=KnowledgeBase([('Условия.txt','Продление допускается при наличии разрешения. Отмена не описана.')])
@@ -304,7 +306,7 @@ class EngineTests(unittest.TestCase):
             return json.dumps({'status':'answer','answer':'Дата 31.02.2025 [S1]','evidence':[]})
         result=asyncio.run(checked_answer('Дата?',[],self.kb.fragments,generate,allow_review=False))
         self.assertEqual(len(calls),1)
-        self.assertEqual(result['status'],'answer')
+        self.assertEqual(result['status'],'insufficient')
 
     def test_fast_mode_skips_planner(self):
         calls=[]
