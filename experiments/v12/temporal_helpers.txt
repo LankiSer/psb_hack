@@ -1,0 +1,74 @@
+def event_interval(question):
+    """Только явно названная дата/месяц/год; номер договора не является датой события."""
+    from datetime import date
+    from calendar import monthrange
+    q=question.lower().replace('ё','е')
+    if re.search(r'\b(?:до|после|раньше|позже|между)\b',q): return None
+    full=re.findall(r'(?<!\d)(\d{1,2})\.(\d{1,2})\.((?:19|20)\d{2})(?!\d)',q)
+    months={'январ':1,'феврал':2,'март':3,'апрел':4,'ма':5,'июн':6,
+            'июл':7,'август':8,'сентябр':9,'октябр':10,'ноябр':11,'декабр':12}
+    named=re.findall(r'\b(?:в|за|на)\s+(январ\w*|феврал\w*|март\w*|апрел\w*|мае|май|мая|июн\w*|июл\w*|август\w*|сентябр\w*|октябр\w*|ноябр\w*|декабр\w*)\s+((?:19|20)\d{2})\b',q)
+    years=re.findall(r'\b(?:в|за|на)\s+((?:19|20)\d{2})\s*(?:году|год|г\.)?\b',q)
+    periods=[]
+    try:
+        for d,m,y in full:
+            day=date(int(y),int(m),int(d));periods.append((day,day))
+        for word,y in named:
+            m=next(value for prefix,value in months.items() if word.startswith(prefix))
+            y=int(y);periods.append((date(y,m,1),date(y,m,monthrange(y,m)[1])))
+        for y in years:periods.append((date(int(y),1,1),date(int(y),12,31)))
+    except (ValueError,StopIteration): return None
+    unique=set(periods)
+    return next(iter(unique)) if len(unique)==1 else None
+
+
+def edition_context(kb, question, fragments):
+    """Исключаем заведомо неприменимые редакции только по явным датам из их текста."""
+    from datetime import datetime
+    _,current=split_dialogue(question)
+    interval=event_interval(current)
+    if not interval: return fragments,None
+    lo,hi=interval
+    compare=bool(re.search(r'сравн|отлич|изменил|изменени|обе\s+редакц|две\s+редакц',current,re.I))
+    groups={}
+    for key,doc in kb.documents.items():
+        title=doc['title']
+        if not re.search(r'регламент|положение|политик|инструкц',title,re.I):continue
+        family=re.split(r'\bред(?:акци\w*)?\.?\s+(?:от\s+)?\d',title,flags=re.I)[0].strip().casefold()
+        if family==title.strip().casefold():continue
+        groups.setdefault(family,[]).append(key)
+    excluded=set();notes=[]
+    present={f.document_id for f in fragments}
+    for ids in groups.values():
+        if len(ids)<2 or not present.intersection(ids):continue
+        for key in ids:
+            doc=kb.documents[key]
+            # Дата утверждения и год в названии не заменяют дату вступления в силу.
+            if re.search(r'обратн\w*\s+сил|распространя\w*[^.\n]{0,100}(?:отношен|период)|применя\w*[^.\n]{0,80}(?:ранее|возникш)',doc['text'],re.I):
+                continue  # Ретроактивные оговорки требуют отдельного разбора.
+            text=doc['text'][:1600]
+            def dates(pattern):
+                found=[]
+                for raw in re.findall(pattern+r'\s+(\d{1,2}\.\d{1,2}\.\d{4})',text,re.I):
+                    try:found.append(datetime.strptime(raw,'%d.%m.%Y').date())
+                    except ValueError:pass
+                return set(found)
+            starts=dates(r'(?:действует\s+с|вступает\s+в\s+силу\s+с)')
+            ends=dates(r'(?:утратила?\s+силу\s+с|утрачивает\s+силу\s+с)')
+            # Противоречивые даты требуют модельного разбора, а не жёсткого фильтра.
+            if len(starts)>1 or len(ends)>1:continue
+            start=next(iter(starts),None);end=next(iter(ends),None)
+            if start and end and start>=end:continue
+            outside=(start and start>hi) or (end and end<=lo)
+            if outside and not compare:excluded.add(key)
+            if start or end:
+                notes.append({'document':doc['title'],'effective_from':start.isoformat() if start else None,
+                              'effective_until_exclusive':end.isoformat() if end else None,
+                              'outside_event_interval':bool(outside),'excluded':key in excluded})
+    if not notes:return fragments,None
+    return [f for f in fragments if f.document_id not in excluded],{
+        'event_from':lo.isoformat(),'event_through':hi.isoformat(),'editions':notes,
+        'rule':'Даты взяты из явных условий документов. Исключённые редакции не обосновывают ответ о событии. '
+               'Отсутствие границы не означает подтверждение применимости. Если период пересекает смену редакции, раздели ответ по датам.'}
+
+

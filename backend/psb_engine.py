@@ -238,21 +238,52 @@ class KnowledgeBase:
         contract_keys = set()
         current_mentions = [(m.start(),key) for key,party in parties.items() for m in re.finditer(re.escape(party)+r'(?![а-яА-Я-])',current,re.I)]
         if not current_mentions: current_mentions = inflected_mentions(current)
-        identifiers = contract_ids(current) or (set() if current_mentions else contract_ids(prior))
+        # Контекст договора берём из последней пользовательской реплики с идентификатором/стороной.
+        # Ответы ассистента не задают факты, старые договоры не объединяются с новым автоматически.
+        scope_text = current
+        scope_mentions = current_mentions
+        if not contract_ids(current) and not current_mentions:
+            for message in reversed(history):
+                if message['role'] != 'user': continue
+                text = message['text']
+                found = [(m.start(),key) for key,party in parties.items()
+                         for m in re.finditer(re.escape(party)+r'(?![а-яА-Я-])',text,re.I)]
+                if not found: found = inflected_mentions(text)
+                if contract_ids(text) or found:
+                    scope_text,scope_mentions = text,found
+                    break
+        identifiers = contract_ids(current) or contract_ids(scope_text)
+        if compare and not contract_ids(current): identifiers = contract_ids(prior)
+
         if identifiers:
             contract_keys = {k for k,d in self.documents.items() if identifiers & contract_ids(d["title"]+"\n"+d["text"][:350])}
-        elif mentions and not compare:
-            contract_keys = {max(current_mentions or mentions)[1]}
+        elif scope_mentions and not compare:
+            # Одна компания может иметь несколько договоров: сохраняем неоднозначность для уточнения.
+            latest = max(position for position,key in scope_mentions)
+            contract_keys = {key for position,key in scope_mentions if position == latest}
         if contract_keys and not compare:
             ranked = [f for f in ranked if f.document_id not in parties or f.document_id in contract_keys]
             active_ids=set().union(*(contract_ids(self.documents[k]["title"]+"\n"+self.documents[k]["text"][:350]) for k in contract_keys))
             ranked = [f for f in ranked if not contract_ids(f.title+"\n"+f.text[:350]) or bool(active_ids & contract_ids(f.title+"\n"+f.text[:350]))]
-            focused = [f for f in self.fragments if f.document_id in contract_keys]
+            focused = [f for f in ranked if f.document_id in contract_keys]
             ranked = focused + [f for f in ranked if f not in focused]
+        if identifiers and not contract_keys and not compare:
+            # Отсутствующий номер не разрешает подставлять условия другого договора.
+            ranked = [f for f in ranked if f.document_id not in parties and
+                      not contract_ids(f.title+'\n'+self.documents[f.document_id]['text'][:350])]
         # Реранкер задаёт порядок лишь среди допустимых источников после фильтра контрагента.
         if ranked_fragments:
             order = {key:i for i,key in enumerate(ranked_fragments)}
-            ranked.sort(key=lambda f:order.get(f.id,len(order)))
+            ranked.sort(key=lambda f:(0 if contract_keys and not compare and f.document_id in contract_keys else 1, order.get(f.id,len(order))))
+        if contract_keys and not compare:
+            # Сохраняем по одному лучшему основанию каждого подходящего договора до остальных фрагментов.
+            first_by_doc = {}
+            for fragment in ranked:
+                if fragment.document_id in contract_keys:
+                    first_by_doc.setdefault(fragment.document_id, fragment)
+            anchors = list(first_by_doc.values())
+            ranked = anchors + [f for f in ranked if f not in anchors]
+            limit = max(limit, min(len(anchors), 8))
         if raw:
             return ranked[:limit]
         selected = []
@@ -329,7 +360,8 @@ def split_dialogue(question: str) -> tuple[list[dict], str]:
 def prompt(question: str, history: list[dict], fragments: list[Fragment], catalog=None) -> str:
     embedded,last = split_dialogue(question)
     return json.dumps({"history":(history+embedded)[-8:], "question":last,
-        "catalog":catalog or [],
+        # Каталог нужен поиску; названия непрочитанных документов провоцируют ложные выводы.
+        "catalog":list(dict.fromkeys(f.title for f in fragments)),
         # Внутренний document_id не передаём: модель должна видеть ровно один ID ссылки.
         "sources":[{"id":f"S{i+1}","title":f.title,"line_start":f.line_start,"line_end":f.line_end,"text":f.text,
                     **({"governing_clause":f.heading} if f.heading else {})} for i,f in enumerate(fragments)]},ensure_ascii=False)

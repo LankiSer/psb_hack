@@ -1,0 +1,29 @@
+def complete_comparison_sources(kb, combined, fragments):
+    """Планировщик не может убрать один из явно сравниваемых договоров."""
+    _,current=split_dialogue(combined)
+    identifiers=contract_ids(current)
+    if len(identifiers)<2 or not re.search(r'сравн|отлич|между|оба\b|обоим|кажд|по\s+договорам',current,re.I):
+        return fragments
+    documents={key for key,doc in kb.documents.items()
+               if identifiers & contract_ids(doc['title']+'\n'+doc['text'][:350])}
+    if not documents:return fragments
+    # Лексическая оценка внутри каждого требуемого документа, без новых обращений к модели.
+    ranked=kb.search(combined,limit=len(kb.fragments),raw=True)
+    anchors={}
+    for fragment in ranked:
+        if fragment.document_id in documents:
+            anchors.setdefault(fragment.document_id,fragment)
+    selected=[]
+    def include(fragment):
+        if any(f.document_id==fragment.document_id and fragment.text in f.text for f in selected):return
+        remaining=[f for f in selected if not (f.document_id==fragment.document_id and f.text in fragment.text)]
+        if sum(len(f.text) for f in remaining)+len(fragment.text)<=30000:
+            selected[:]=remaining+[fragment]
+    # Сначала положения всех сравниваемых документов; затем остальной найденный контекст.
+    for fragment in anchors.values():include(fragment)
+    for fragment in fragments:include(fragment)
+    for fragment in list(anchors.values())[:4]:
+        for parent in kb.section_context(fragment):include(parent)
+    return selected
+
+

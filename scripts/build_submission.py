@@ -6,12 +6,14 @@ from zipfile import ZipFile, ZIP_DEFLATED
 
 ROOT = Path(__file__).resolve().parents[1]
 
-def build(output: Path | None = None) -> Path:
+def build(output: Path | None = None, *, engine_path: Path | None = None, solution_path: Path | None = None) -> Path:
     output = output or ROOT / "dist" / "psb-submission.zip"
     output.parent.mkdir(parents=True, exist_ok=True)
     with ZipFile(output, "w", ZIP_DEFLATED) as archive:
         for name in ("solution.py", "psb_engine.py", "psb_retrieval.py", "rule_checks.py"):
-            archive.write(ROOT / "backend" / name, name)
+            source = engine_path if name == 'psb_engine.py' and engine_path else ROOT / 'backend' / name
+            if name == 'solution.py' and solution_path: source = solution_path
+            archive.write(source, name)
         archive.write(ROOT / "requirements.txt", "requirements.txt")
     with ZipFile(output) as archive:
         assert set(archive.namelist()) == {"solution.py", "psb_engine.py", "psb_retrieval.py", "rule_checks.py", "requirements.txt"}
